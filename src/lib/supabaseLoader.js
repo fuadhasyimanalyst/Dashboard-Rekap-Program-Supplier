@@ -4,6 +4,13 @@ import { supabase } from './supabaseClient'
 // tabel sales (bisa >5000 baris) perlu diambil per halaman lalu digabung.
 const PAGE_SIZE = 1000
 
+// Cache di localStorage browser, supaya tidak perlu fetch ulang ribuan
+// baris tiap kali dashboard dibuka. Cache dianggap basi (dan di-refresh
+// otomatis) begitu "last_synced_at" di tabel sync_meta berubah — yaitu
+// begitu ada `npm run sync` baru dari Excel.
+const CACHE_VERSION_KEY = 'rekap_program_cache_version'
+const CACHE_DATA_KEY = 'rekap_program_cache_data'
+
 async function fetchAllRows(table, columns) {
   let from = 0
   let all = []
@@ -71,7 +78,62 @@ function mapPeriodeProgramRow(row) {
   }
 }
 
-export async function loadAllData() {
+// Ambil penanda versi data terbaru dari tabel sync_meta. Kalau tabelnya
+// belum ada (migration belum dijalankan) atau kosong, return null -> cache
+// tidak dipakai sama sekali, selalu fetch langsung (aman, tidak pernah error).
+async function getSyncVersion() {
+  const { data, error } = await supabase
+    .from('sync_meta')
+    .select('last_synced_at')
+    .eq('id', 1)
+    .maybeSingle()
+  if (error || !data) return null
+  return data.last_synced_at
+}
+
+function readCache(version) {
+  try {
+    const cachedVersion = localStorage.getItem(CACHE_VERSION_KEY)
+    if (!cachedVersion || cachedVersion !== version) return null
+    const raw = localStorage.getItem(CACHE_DATA_KEY)
+    if (!raw) return null
+    return JSON.parse(raw)
+  } catch {
+    return null // localStorage disabled/corrupt -> abaikan, fallback ke fetch biasa
+  }
+}
+
+function writeCache(version, data) {
+  try {
+    localStorage.setItem(CACHE_VERSION_KEY, version)
+    localStorage.setItem(CACHE_DATA_KEY, JSON.stringify(data))
+  } catch {
+    // localStorage penuh/disabled -> aplikasi tetap jalan, hanya tanpa cache
+  }
+}
+
+export function clearCache() {
+  try {
+    localStorage.removeItem(CACHE_VERSION_KEY)
+    localStorage.removeItem(CACHE_DATA_KEY)
+  } catch {
+    // no-op
+  }
+}
+
+// opts.forceRefresh: lewati cache sekalipun versinya cocok (dipakai tombol
+// "Muat ulang" manual di UI, untuk jaga-jaga kalau cache dicurigai basi).
+export async function loadAllData(opts = {}) {
+  const { forceRefresh = false } = opts
+  const version = await getSyncVersion()
+
+  if (!forceRefresh && version) {
+    const cached = readCache(version)
+    if (cached) {
+      return { ...cached, lastSyncedAt: version, fromCache: true }
+    }
+  }
+
   const [salesRows, masterBarangRows, nominalWajibRows, periodeProgramRows] = await Promise.all([
     fetchAllRows(
       'sales',
@@ -82,10 +144,16 @@ export async function loadAllData() {
     fetchAllRows('periode_program', 'supp, program, awal, akhir'),
   ])
 
-  return {
+  const result = {
     sales: salesRows.map(mapSalesRow),
     masterBarang: masterBarangRows.map(mapMasterBarangRow),
     nominalWajib: nominalWajibRows.map(mapNominalWajibRow),
     periodeProgram: periodeProgramRows.map(mapPeriodeProgramRow),
   }
+
+  if (version) {
+    writeCache(version, result)
+  }
+
+  return { ...result, lastSyncedAt: version, fromCache: false }
 }

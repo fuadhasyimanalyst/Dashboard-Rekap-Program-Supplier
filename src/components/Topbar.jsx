@@ -1,6 +1,7 @@
 import React from 'react'
-import { CalendarClock, DatabaseZap, PanelLeftOpen } from 'lucide-react'
+import { CalendarClock, DatabaseZap, PanelLeftOpen, RefreshCw } from 'lucide-react'
 import { useData } from '../context/DataContext'
+import { formatDateTime } from '../lib/format'
 
 const TITLES = {
   overview: 'Ringkasan',
@@ -9,7 +10,7 @@ const TITLES = {
 }
 
 export default function Topbar({ active, sidebarHidden, onShowSidebar }) {
-  const { ignorePeriod, setIgnorePeriod, meta } = useData()
+  const { ignorePeriod, setIgnorePeriod, meta, status, reload } = useData()
 
   return (
     <header className="sticky top-0 z-20 bg-sand-50/90 backdrop-blur border-b border-sand-200 px-5 md:px-8 py-4 flex flex-wrap items-center justify-between gap-3">
@@ -27,7 +28,8 @@ export default function Topbar({ active, sidebarHidden, onShowSidebar }) {
           <h1 className="text-xl font-bold text-ink-900">{TITLES[active] || ''}</h1>
           <div className="text-[13px] text-ink-700/70 flex items-center gap-1.5 mt-0.5">
             <DatabaseZap size={13} />
-            Sumber data: {meta.salesFileName} &amp; {meta.masterFileName}
+            Data tersinkron: {formatDateTime(meta.lastSyncedAt)}
+            {meta.fromCache && <span className="text-ink-700/50">(dari cache)</span>}
           </div>
         </div>
       </div>
@@ -51,6 +53,15 @@ export default function Topbar({ active, sidebarHidden, onShowSidebar }) {
             <CalendarClock size={13} /> Semua transaksi
           </button>
         </div>
+        <button
+          onClick={reload}
+          disabled={status === 'loading'}
+          title="Muat ulang langsung dari Supabase, lewati cache"
+          className="flex items-center gap-1.5 px-3 py-2 rounded-full border border-sand-200 bg-white text-[13px] text-ink-700 hover:bg-sand-100 transition-colors disabled:opacity-50"
+        >
+          <RefreshCw size={13} className={status === 'loading' ? 'animate-spin' : ''} />
+          Muat ulang
+        </button>
       </div>
     </header>
   )
