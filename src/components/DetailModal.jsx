@@ -114,6 +114,34 @@ export default function DetailModal({ row, onClose }) {
           </div>
         </div>
 
+        {row.paketProgress && (
+          <div className="px-6 py-4 border-b border-sand-200">
+            <div className="text-[12.5px] text-ink-700/60 mb-2">Rincian per paket</div>
+            <div className="flex flex-wrap gap-1.5">
+              {Array.from({ length: row.paketProgress.totalPaket }).map((_, i) => {
+                const done = i < row.paketProgress.paketTerpenuhi
+                const isNext = i === row.paketProgress.paketTerpenuhi
+                return (
+                  <span
+                    key={i}
+                    className={`px-2.5 py-1 rounded-lg text-[12.5px] font-medium flex items-center gap-1.5 ${
+                      done ? 'bg-pine-500/10 text-pine-600' : 'bg-clay-500/10 text-clay-600'
+                    }`}
+                  >
+                    {done ? <CheckCircle2 size={13} /> : <Circle size={13} />}
+                    Paket {i + 1}
+                  </span>
+                )
+              })}
+            </div>
+            {row.paketProgress.nextGap && (
+              <div className="text-[13px] text-clay-600 mt-2">
+                Untuk paket ke-{row.paketProgress.paketTerpenuhi + 1}: <b>{row.paketProgress.nextGap}</b>
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="px-6 py-4 border-b border-sand-200">
           <div className="text-[12.5px] text-ink-700/60 mb-2">Periode program: {formatDateRange(row.period?.awal, row.period?.akhir)}</div>
           {row.kekurangan.length > 0 ? (

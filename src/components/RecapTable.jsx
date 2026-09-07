@@ -15,7 +15,7 @@ const EXPORT_COLUMNS = [
   { label: 'Sales', key: 'salesFaktur', width: 16 },
   { label: 'Supplier', key: 'supp', width: 12 },
   { label: 'Program', key: 'program', width: 14 },
-  { label: 'Jumlah Paket', key: 'jumlahPaket', width: 12, align: 'center' },
+  { label: 'Paket Terpenuhi', value: (r) => (r.jumlahPaket > 1 ? `${r.paketProgress?.paketTerpenuhi ?? 0}/${r.jumlahPaket}` : '1/1'), width: 14, align: 'center' },
   { label: 'Omset', key: 'omset', width: 18, numFmt: '#,##0', align: 'right' },
   { label: 'Varian Dibeli', value: (r) => `${r.varianCount}/${r.totalVarianProgram}`, width: 14, align: 'center' },
   { label: 'Status', value: (r) => (r.tercapai ? 'Tercapai' : 'Belum Tercapai'), width: 16, align: 'center' },
@@ -138,7 +138,16 @@ export default function RecapTable({ recap }) {
                   <td className="px-4 py-3 text-ink-700">{r.program}</td>
                   <td className="px-4 py-3 text-center">
                     {r.jumlahPaket > 1 ? (
-                      <span className="px-2 py-0.5 rounded-md bg-brass-500/10 text-brass-600 text-[12px] font-semibold">{r.jumlahPaket}x</span>
+                      <span
+                        title={r.paketProgress?.nextGap ? `Paket ke-${r.paketProgress.paketTerpenuhi + 1}: ${r.paketProgress.nextGap}` : undefined}
+                        className={`px-2 py-0.5 rounded-md text-[12px] font-semibold ${
+                          r.paketProgress?.paketBelum > 0
+                            ? 'bg-clay-500/10 text-clay-600'
+                            : 'bg-pine-500/10 text-pine-600'
+                        }`}
+                      >
+                        {r.paketProgress?.paketTerpenuhi ?? 0}/{r.jumlahPaket} paket
+                      </span>
                     ) : (
                       <span className="text-ink-700/40 text-[12px]">1x</span>
                     )}

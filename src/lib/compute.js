@@ -80,6 +80,60 @@ const RULES = {
   },
 }
 
+// Untuk program yang berbasis "jumlah varian wajib" (SUPERFAN/KUNINGAN/
+// PVCBV), dimensi mana yang dihitung sebagai "varian dibeli": SUPERFAN
+// cuma menghitung varian yang berstatus WAJIB, sedangkan KUNINGAN/PVCBV
+// menghitung semua varian yang sudah dibeli (lihat RULES di atas).
+const PAKET_VARIAN_DIMENSION = { SUPERFAN: 'wajib', KUNINGAN: 'bought', PVCBV: 'bought' }
+
+// Pecah progress pelanggan yang ambil >1 paket jadi status per-paket:
+// dari `total` paket, berapa yang SUDAH memenuhi syarat penuh (omset DAN
+// varian, kalau program itu punya syarat itu), dan apa saja yang masih
+// kurang untuk paket berikutnya (paket ke-(paketTerpenuhi+1)). Ini supaya
+// misal pelanggan ambil 2 paket SUPERFAN, tim sales bisa lihat: "1 paket
+// sudah lunas, 1 paket lagi masih kurang omset Rp X / varian Y" — bukan
+// cuma "belum tercapai" tanpa rincian.
+function computePaketProgress(program, p) {
+  const total = p.jumlahPaket
+  if (!total || total <= 1) return null // pelanggan 1 paket biasa, tidak perlu breakdown
+
+  let omsetTerpenuhi = total
+  const hasOmsetSyarat = p.nominalRequiredBase != null && p.nominalRequiredBase > 0
+  if (hasOmsetSyarat) {
+    omsetTerpenuhi = Math.min(total, Math.floor(p.omset / p.nominalRequiredBase))
+  }
+
+  let varianTerpenuhi = total
+  const baseWajib = BASE_WAJIB_NEEDED[program]
+  const dimension = PAKET_VARIAN_DIMENSION[program]
+  if (baseWajib) {
+    const have = dimension === 'wajib' ? p.wajibBoughtCount : p.boughtCount
+    varianTerpenuhi = Math.min(total, Math.floor(have / baseWajib))
+  }
+
+  const paketTerpenuhi = Math.min(omsetTerpenuhi, varianTerpenuhi)
+  const paketBelum = total - paketTerpenuhi
+
+  // Apa yang masih kurang khusus untuk paket berikutnya (target ke-N)
+  let nextGap = null
+  if (paketBelum > 0) {
+    const target = paketTerpenuhi + 1
+    const gaps = []
+    if (hasOmsetSyarat && omsetTerpenuhi < target) {
+      const need = p.nominalRequiredBase * target - p.omset
+      gaps.push(`omset kurang ${moneyDiff(need)}`)
+    }
+    if (baseWajib && varianTerpenuhi < target) {
+      const have = dimension === 'wajib' ? p.wajibBoughtCount : p.boughtCount
+      const need = baseWajib * target - have
+      gaps.push(`varian kurang ${need}`)
+    }
+    nextGap = gaps.join(' & ') || null
+  }
+
+  return { totalPaket: total, paketTerpenuhi, paketBelum, nextGap }
+}
+
 function moneyFmt(n) {
   return 'Rp ' + Math.round(n).toLocaleString('id-ID')
 }
@@ -127,21 +181,32 @@ export function buildProgramMeta(masterBarang, nominalWajib, periodeProgram, jum
   }
 
   // Berapa paket program yang diambil tiap pelanggan (sheet/tabel "JUMLAH
-  // PAKET"). Dicocokkan dulu lewat KODE PELANGGAN (paling akurat), lalu
-  // fallback ke NAMA PELANGGAN (di-normalisasi) kalau kode kosong di sheet.
-  const paketByKode = new Map() // `${kodeToko}||${supp}||${program}` -> jumlah
-  const paketByNama = new Map() // `${NAMA}||${supp}||${program}` -> jumlah
+  // PAKET"). Dicocokkan lewat KODE PELANGGAN (paling akurat) DAN NAMA
+  // PELANGGAN sekaligus (bukan salah satu) — supaya kalau kode-nya sedikit
+  // meleset (beda spasi/huruf besar-kecil) atau salah ketik, sistem masih
+  // bisa mencocokkan lewat nama sebagai jaring pengaman. KODE, SUPP, dan
+  // PROGRAM dinormalisasi (trim + uppercase) waktu dibandingkan supaya
+  // beda spasi/huruf besar-kecil tidak bikin gagal cocok secara diam-diam.
+  const paketByKode = new Map() // `${KODE}||${SUPP}||${PROGRAM}` -> jumlah
+  const paketByNama = new Map() // `${NAMA}||${SUPP}||${PROGRAM}` -> jumlah
   for (const p of jumlahPaket) {
     const jumlah = Number(p.jumlahPaket) > 0 ? Number(p.jumlahPaket) : 1
-    if (p.kodeToko) paketByKode.set(`${p.kodeToko}||${p.supp}||${p.program}`, jumlah)
-    else if (p.namaPelanggan) paketByNama.set(`${normName(p.namaPelanggan)}||${p.supp}||${p.program}`, jumlah)
+    const suppKey = normName(p.supp)
+    const progKey = normName(p.program)
+    if (p.kodeToko) paketByKode.set(`${normName(p.kodeToko)}||${suppKey}||${progKey}`, jumlah)
+    if (p.namaPelanggan) paketByNama.set(`${normName(p.namaPelanggan)}||${suppKey}||${progKey}`, jumlah)
   }
   function getJumlahPaket(kodeToko, namaPelanggan, supp, program) {
-    if (kodeToko && paketByKode.has(`${kodeToko}||${supp}||${program}`)) {
-      return paketByKode.get(`${kodeToko}||${supp}||${program}`)
+    const suppKey = normName(supp)
+    const progKey = normName(program)
+    if (kodeToko) {
+      const kk = `${normName(kodeToko)}||${suppKey}||${progKey}`
+      if (paketByKode.has(kk)) return paketByKode.get(kk)
     }
-    const nk = `${normName(namaPelanggan)}||${supp}||${program}`
-    if (paketByNama.has(nk)) return paketByNama.get(nk)
+    if (namaPelanggan) {
+      const nk = `${normName(namaPelanggan)}||${suppKey}||${progKey}`
+      if (paketByNama.has(nk)) return paketByNama.get(nk)
+    }
     return 1 // default: pelanggan biasa, tidak ikut paket berganda
   }
 
@@ -230,6 +295,14 @@ export function computeRecap(sales, masterBarang, nominalWajib, periodeProgram, 
     const rule = RULES[g.program]
     const result = rule ? rule(ctx) : { tercapai: false, kekurangan: ['Aturan program belum didefinisikan'] }
 
+    const paketProgress = computePaketProgress(g.program, {
+      omset: g.omset,
+      nominalRequiredBase,
+      wajibBoughtCount: wajibBoughtNames.length,
+      boughtCount: boughtItemNames.length,
+      jumlahPaket,
+    })
+
     recap.push({
       kodeToko: g.kodeToko,
       namaPelanggan: g.namaPelanggan,
@@ -243,6 +316,7 @@ export function computeRecap(sales, masterBarang, nominalWajib, periodeProgram, 
       periodeDipakai: !ignorePeriod && !!g.period,
       omset: g.omset,
       jumlahPaket,
+      paketProgress, // null kalau jumlahPaket 1; else {totalPaket, paketTerpenuhi, paketBelum, nextGap}
       nominalRequired,
       nominalRequiredBase,
       varianDibeli: boughtItemNames.map((n) => g.items.get(n).namaBarang),
@@ -319,5 +393,30 @@ export function applyGlobalFilters(recap, filters = {}) {
     if (filters.status === 'Tercapai' && !r.tercapai) return false
     if (filters.status === 'Belum Tercapai' && r.tercapai) return false
     return true
+  })
+}
+
+// Debugging helper: dari daftar recap yang sudah dihitung, cari baris di
+// sheet/tabel "JUMLAH PAKET" yang tidak nyambung ke transaksi manapun --
+// biasanya karena KODE PELANGGAN / NAMA PELANGGAN / SUPP / PROGRAM di
+// sheet itu tidak persis sama dengan yang ada di data penjualan atau
+// master program (typo, kode salah, dsb), atau karena pelanggan itu
+// belum ada transaksi utk program tsb dalam periode yang sedang dipakai.
+// Dipakai UI untuk kasih peringatan supaya ketahuan lebih cepat.
+export function findUnmatchedJumlahPaket(recap, jumlahPaket = []) {
+  const byKode = new Set()
+  const byNama = new Set()
+  for (const r of recap) {
+    const suppKey = normName(r.supp)
+    const progKey = normName(r.program)
+    if (r.kodeToko) byKode.add(`${normName(r.kodeToko)}||${suppKey}||${progKey}`)
+    if (r.namaPelanggan) byNama.add(`${normName(r.namaPelanggan)}||${suppKey}||${progKey}`)
+  }
+  return jumlahPaket.filter((p) => {
+    const suppKey = normName(p.supp)
+    const progKey = normName(p.program)
+    const hitKode = p.kodeToko && byKode.has(`${normName(p.kodeToko)}||${suppKey}||${progKey}`)
+    const hitNama = p.namaPelanggan && byNama.has(`${normName(p.namaPelanggan)}||${suppKey}||${progKey}`)
+    return !hitKode && !hitNama
   })
 }

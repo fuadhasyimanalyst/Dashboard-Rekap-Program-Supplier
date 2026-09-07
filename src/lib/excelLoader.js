@@ -130,6 +130,16 @@ function parseMasterWorkbook(wb) {
     }
   }
 
+  // Sheet "JUMLAH PAKET" kamu tidak punya kolom SUPP -- ditebak dari
+  // PROGRAM-nya lewat data MASTER BARANG (lihat catatan yang sama di
+  // scripts/sync-excel-to-supabase.js, sumber kebenaran utama untuk sync).
+  const programToSupps = new Map()
+  for (const row of masterBarang) {
+    const pKey = row.program.toUpperCase()
+    if (!programToSupps.has(pKey)) programToSupps.set(pKey, new Set())
+    programToSupps.get(pKey).add(row.supp)
+  }
+
   // Sheet baru: "JUMLAH PAKET" -> berapa paket program yang diambil tiap
   // pelanggan. Syarat omset & syarat item wajib pada compute.js akan
   // dikalikan dengan angka ini (default 1 kalau pelanggan tidak ada di
@@ -142,9 +152,15 @@ function parseMasterWorkbook(wb) {
     for (let r = 1; r < kRows.length; r++) {
       const row = kRows[r]
       if (!row || row.every((c) => c == null)) continue
-      const supp = get(row, kIdx, 'SUPP')
       const program = get(row, kIdx, 'PROGRAM')
-      if (!supp || !program) continue
+      if (!program) continue
+      const progKey = String(program).trim().toUpperCase()
+      let supp = get(row, kIdx, 'SUPP')
+      if (!supp) {
+        const candidates = programToSupps.get(progKey)
+        if (candidates && candidates.size === 1) supp = Array.from(candidates)[0]
+        else continue // ambigu atau program tidak dikenal -> lewati baris ini
+      }
       const jumlah = Number(get(row, kIdx, 'JUMLAH PAKET', ['PAKET', 'JML PAKET']))
       jumlahPaket.push({
         kodeToko: get(row, kIdx, 'KODE PELANGGAN', ['KODE TOKO']),

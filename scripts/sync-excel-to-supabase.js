@@ -148,10 +148,24 @@ function parseMaster(filePath) {
     }
   }
 
+  // Sheet "JUMLAH PAKET" kamu tidak punya kolom SUPP -- jadi SUPP ditebak
+  // dari PROGRAM-nya, dicocokkan ke data di sheet MASTER BARANG (program
+  // -> supp mana saja yang punya program itu). Kalau nama program itu
+  // cuma dipakai oleh satu supplier (kasus umum), tebakannya pasti benar.
+  // Kalau dipakai lebih dari satu supplier sekaligus, baris itu di-skip
+  // dan dilaporkan sebagai warning (perlu SUPP eksplisit di sheet-nya).
+  const programToSupps = new Map() // PROGRAM (upper) -> Set<supp>
+  for (const row of masterBarang) {
+    const pKey = row.program.toUpperCase()
+    if (!programToSupps.has(pKey)) programToSupps.set(pKey, new Set())
+    programToSupps.get(pKey).add(row.supp)
+  }
+
   // Sheet baru: "JUMLAH PAKET" -> KODE PELANGGAN | NAMA PELANGGAN | SUPP |
   // PROGRAM | JUMLAH PAKET. Syarat omset & syarat varian wajib di
   // src/lib/compute.js dikalikan angka ini per pelanggan+supp+program.
   const jumlahPaket = []
+  const jumlahPaketSkipped = [] // baris yg gagal ditentukan SUPP-nya, utk dilaporkan
   const paketSheetName = findSheet('JUMLAH PAKET')
   if (paketSheetName) {
     const kRows = sheetToRows(wb.Sheets[paketSheetName])
@@ -159,9 +173,27 @@ function parseMaster(filePath) {
     for (let r = 1; r < kRows.length; r++) {
       const row = kRows[r]
       if (!row || row.every((c) => c == null)) continue
-      const supp = get(row, kIdx, 'SUPP')
       const program = get(row, kIdx, 'PROGRAM')
-      if (!supp || !program) continue
+      if (!program) continue
+      const progKey = String(program).trim().toUpperCase()
+
+      let supp = get(row, kIdx, 'SUPP') // kalau sheet-nya memang punya kolom SUPP, pakai itu
+      if (!supp) {
+        const candidates = programToSupps.get(progKey)
+        if (candidates && candidates.size === 1) {
+          supp = Array.from(candidates)[0] // tebak: satu-satunya supp yang punya program ini
+        } else {
+          jumlahPaketSkipped.push({
+            kodeToko: get(row, kIdx, 'KODE PELANGGAN', ['KODE TOKO']),
+            program,
+            reason: !candidates || candidates.size === 0
+              ? `program "${program}" tidak ditemukan di MASTER BARANG`
+              : `program "${program}" dipakai ${candidates.size} supplier berbeda (${Array.from(candidates).join(', ')}), butuh kolom SUPP eksplisit`,
+          })
+          continue
+        }
+      }
+
       const jumlah = Number(get(row, kIdx, 'JUMLAH PAKET', ['PAKET', 'JML PAKET']))
       jumlahPaket.push({
         kode_toko: get(row, kIdx, 'KODE PELANGGAN', ['KODE TOKO']),
@@ -173,7 +205,7 @@ function parseMaster(filePath) {
     }
   }
 
-  return { masterBarang, nominalWajib, periodeProgram, jumlahPaket }
+  return { masterBarang, nominalWajib, periodeProgram, jumlahPaket, jumlahPaketSkipped }
 }
 
 async function replaceTable(table, rows) {
@@ -200,13 +232,22 @@ async function replaceTable(table, rows) {
 async function main() {
   console.log(`Membaca ${salesPath} & ${masterPath} ...`)
   const sales = parseSales(path.resolve(salesPath))
-  const { masterBarang, nominalWajib, periodeProgram, jumlahPaket } = parseMaster(path.resolve(masterPath))
+  const { masterBarang, nominalWajib, periodeProgram, jumlahPaket, jumlahPaketSkipped } = parseMaster(path.resolve(masterPath))
 
   console.log(
     `Ditemukan: ${sales.length} baris sales, ${masterBarang.length} master barang, ` +
     `${nominalWajib.length} nominal wajib, ${periodeProgram.length} periode program, ` +
     `${jumlahPaket.length} baris jumlah paket.\n`
   )
+
+  if (jumlahPaketSkipped.length > 0) {
+    console.log(`PERINGATAN: ${jumlahPaketSkipped.length} baris di sheet JUMLAH PAKET dilewati (SUPP tidak bisa ditebak):`)
+    for (const s of jumlahPaketSkipped.slice(0, 20)) {
+      console.log(`   - ${s.kodeToko || '(kode kosong)'} / ${s.program}: ${s.reason}`)
+    }
+    if (jumlahPaketSkipped.length > 20) console.log(`   ...dan ${jumlahPaketSkipped.length - 20} baris lainnya`)
+    console.log('')
+  }
 
   await replaceTable('sales', sales)
   await replaceTable('master_barang', masterBarang)
