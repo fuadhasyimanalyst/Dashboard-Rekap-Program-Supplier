@@ -1,0 +1,31 @@
+export function formatRupiah(n) {
+  if (n === null || n === undefined || isNaN(n)) return '-'
+  return 'Rp ' + Math.round(n).toLocaleString('id-ID')
+}
+
+export function formatDate(iso) {
+  if (!iso) return '-'
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return String(iso)
+  return d.toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' })
+}
+
+export function formatDateRange(awal, akhir) {
+  if (!awal || !akhir) return 'Sepanjang data'
+  return `${formatDate(awal)} – ${formatDate(akhir)}`
+}
+
+export function toISODate(v) {
+  if (!v) return null
+  if (v instanceof Date) return v.toISOString().slice(0, 10)
+  // handle excel serial numbers
+  if (typeof v === 'number') {
+    const epoch = new Date(Date.UTC(1899, 11, 30))
+    const d = new Date(epoch.getTime() + v * 86400000)
+    return d.toISOString().slice(0, 10)
+  }
+  const s = String(v).trim()
+  const d = new Date(s)
+  if (!isNaN(d.getTime())) return d.toISOString().slice(0, 10)
+  return s
+}
