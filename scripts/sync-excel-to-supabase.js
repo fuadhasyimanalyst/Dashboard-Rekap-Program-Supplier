@@ -11,7 +11,10 @@
 
 import 'dotenv/config'
 import { createClient } from '@supabase/supabase-js'
-import * as XLSX from 'xlsx'
+import * as XLSX_NS from 'xlsx'
+// Di Node murni (bukan Vite), method seperti readFile hanya ada di
+// default export paket xlsx, bukan di namespace import.
+const XLSX = XLSX_NS.default ?? XLSX_NS
 import path from 'path'
 import { toISODate } from '../src/lib/format.js'
 
@@ -145,7 +148,32 @@ function parseMaster(filePath) {
     }
   }
 
-  return { masterBarang, nominalWajib, periodeProgram }
+  // Sheet baru: "JUMLAH PAKET" -> KODE PELANGGAN | NAMA PELANGGAN | SUPP |
+  // PROGRAM | JUMLAH PAKET. Syarat omset & syarat varian wajib di
+  // src/lib/compute.js dikalikan angka ini per pelanggan+supp+program.
+  const jumlahPaket = []
+  const paketSheetName = findSheet('JUMLAH PAKET')
+  if (paketSheetName) {
+    const kRows = sheetToRows(wb.Sheets[paketSheetName])
+    const kIdx = buildIndex(kRows[0])
+    for (let r = 1; r < kRows.length; r++) {
+      const row = kRows[r]
+      if (!row || row.every((c) => c == null)) continue
+      const supp = get(row, kIdx, 'SUPP')
+      const program = get(row, kIdx, 'PROGRAM')
+      if (!supp || !program) continue
+      const jumlah = Number(get(row, kIdx, 'JUMLAH PAKET', ['PAKET', 'JML PAKET']))
+      jumlahPaket.push({
+        kode_toko: get(row, kIdx, 'KODE PELANGGAN', ['KODE TOKO']),
+        nama_pelanggan: get(row, kIdx, 'NAMA PELANGGAN'),
+        supp,
+        program: String(program).trim(),
+        jumlah_paket: jumlah > 0 ? jumlah : 1,
+      })
+    }
+  }
+
+  return { masterBarang, nominalWajib, periodeProgram, jumlahPaket }
 }
 
 async function replaceTable(table, rows) {
@@ -172,17 +200,19 @@ async function replaceTable(table, rows) {
 async function main() {
   console.log(`Membaca ${salesPath} & ${masterPath} ...`)
   const sales = parseSales(path.resolve(salesPath))
-  const { masterBarang, nominalWajib, periodeProgram } = parseMaster(path.resolve(masterPath))
+  const { masterBarang, nominalWajib, periodeProgram, jumlahPaket } = parseMaster(path.resolve(masterPath))
 
   console.log(
     `Ditemukan: ${sales.length} baris sales, ${masterBarang.length} master barang, ` +
-    `${nominalWajib.length} nominal wajib, ${periodeProgram.length} periode program.\n`
+    `${nominalWajib.length} nominal wajib, ${periodeProgram.length} periode program, ` +
+    `${jumlahPaket.length} baris jumlah paket.\n`
   )
 
   await replaceTable('sales', sales)
   await replaceTable('master_barang', masterBarang)
   await replaceTable('nominal_wajib', nominalWajib)
   await replaceTable('periode_program', periodeProgram)
+  await replaceTable('jumlah_paket', jumlahPaket)
 
   console.log('-> Update penanda waktu sync (sync_meta)...')
   const { error: metaErr } = await supabase

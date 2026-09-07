@@ -1,4 +1,4 @@
-import { supabase } from './supabaseClient'
+import { supabase, supabaseConfigured } from './supabaseClient'
 
 // PostgREST membatasi 1000 baris per request secara default, jadi
 // tabel sales (bisa >5000 baris) perlu diambil per halaman lalu digabung.
@@ -78,6 +78,16 @@ function mapPeriodeProgramRow(row) {
   }
 }
 
+function mapJumlahPaketRow(row) {
+  return {
+    kodeToko: row.kode_toko,
+    namaPelanggan: row.nama_pelanggan,
+    supp: row.supp,
+    program: String(row.program).trim(),
+    jumlahPaket: Number(row.jumlah_paket) > 0 ? Number(row.jumlah_paket) : 1,
+  }
+}
+
 // Ambil penanda versi data terbaru dari tabel sync_meta. Kalau tabelnya
 // belum ada (migration belum dijalankan) atau kosong, return null -> cache
 // tidak dipakai sama sekali, selalu fetch langsung (aman, tidak pernah error).
@@ -124,6 +134,13 @@ export function clearCache() {
 // opts.forceRefresh: lewati cache sekalipun versinya cocok (dipakai tombol
 // "Muat ulang" manual di UI, untuk jaga-jaga kalau cache dicurigai basi).
 export async function loadAllData(opts = {}) {
+  if (!supabaseConfigured) {
+    throw new Error(
+      'Konfigurasi Supabase belum diset (VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY). ' +
+      'Kalau ini deployment Vercel, cek Settings > Environment Variables lalu redeploy.'
+    )
+  }
+
   const { forceRefresh = false } = opts
   const version = await getSyncVersion()
 
@@ -134,7 +151,7 @@ export async function loadAllData(opts = {}) {
     }
   }
 
-  const [salesRows, masterBarangRows, nominalWajibRows, periodeProgramRows] = await Promise.all([
+  const [salesRows, masterBarangRows, nominalWajibRows, periodeProgramRows, jumlahPaketRows] = await Promise.all([
     fetchAllRows(
       'sales',
       'no_faktur, tgl_faktur, kode_toko, nama_pelanggan, alamat_pelanggan, depo, sales_faktur, kode_barang, nama_barang, qty, nominal, supp, kota, bulan, bln_thn, tahun, area, divisi'
@@ -142,6 +159,10 @@ export async function loadAllData(opts = {}) {
     fetchAllRows('master_barang', 'supp, kode_barang, nama_barang, isi_per_kotak, program, wajib'),
     fetchAllRows('nominal_wajib', 'supp, program, nominal'),
     fetchAllRows('periode_program', 'supp, program, awal, akhir'),
+    // Tabel baru: kalau migration belum dijalankan di project Supabase ini,
+    // tabelnya belum ada -> jangan gagalkan seluruh load, anggap saja belum
+    // ada pelanggan yang ikut paket berganda (semua default 1 paket).
+    fetchAllRows('jumlah_paket', 'kode_toko, nama_pelanggan, supp, program, jumlah_paket').catch(() => []),
   ])
 
   const result = {
@@ -149,6 +170,7 @@ export async function loadAllData(opts = {}) {
     masterBarang: masterBarangRows.map(mapMasterBarangRow),
     nominalWajib: nominalWajibRows.map(mapNominalWajibRow),
     periodeProgram: periodeProgramRows.map(mapPeriodeProgramRow),
+    jumlahPaket: jumlahPaketRows.map(mapJumlahPaketRow),
   }
 
   if (version) {

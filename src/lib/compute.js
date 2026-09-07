@@ -10,26 +10,37 @@ const REWARD_LABEL = {
   'SUPERFAN': 'Sesuai ketentuan program',
 }
 
+// Jumlah dasar (paket = 1) untuk syarat yang dihitung per-varian, sebelum
+// dikalikan `ctx.jumlahPaket`. Sumber kebenaran tunggal supaya konsisten
+// dengan syarat omset (yang basenya datang dari sheet/tabel NOMINAL WAJIB).
+const BASE_WAJIB_NEEDED = { SUPERFAN: 2, KUNINGAN: 2, PVCBV: 2 }
+
 // How each program decides "tercapai" (qualified). Every rule receives
 // a normalized `ctx` object (see buildContext) and returns
 // { tercapai, kekurangan: string[] }
+//
+// ctx.jumlahPaket: berapa paket program yang diambil pelanggan ini (dari
+// sheet/tabel "JUMLAH PAKET"), default 1. Untuk program yang punya syarat
+// "jumlah varian minimal" (SUPERFAN/KUNINGAN/PVCBV), syarat itu dikalikan
+// jumlahPaket. Syarat omset (ctx.nominalRequired) juga sudah dikalikan
+// jumlahPaket sebelum masuk ke sini (lihat computeRecap).
 const RULES = {
   SUPERFAN: (ctx) => {
     const kekurangan = []
-    const wajibNeeded = 2
+    const wajibNeeded = BASE_WAJIB_NEEDED.SUPERFAN * ctx.jumlahPaket
     const wajibHave = ctx.wajibBoughtNames.length
     if (wajibHave < wajibNeeded) {
       const sisaWajib = ctx.wajibItemNames.filter((n) => !ctx.wajibBoughtNames.includes(n))
       kekurangan.push(
-        `Item wajib baru ${wajibHave}/${wajibNeeded} varian. Perlu tambah salah satu: ${sisaWajib.join(', ') || '-'}`
+        `Item wajib baru ${wajibHave}/${wajibNeeded} varian${ctx.jumlahPaket > 1 ? ` (${ctx.jumlahPaket} paket)` : ''}. Perlu tambah salah satu: ${sisaWajib.join(', ') || '-'}`
       )
     }
     if (ctx.nominalRequired != null && ctx.omset <= ctx.nominalRequired) {
       kekurangan.push(
-        `Omset kurang ${moneyDiff(ctx.nominalRequired - ctx.omset)} (syarat > ${moneyFmt(ctx.nominalRequired)})`
+        `Omset kurang ${moneyDiff(ctx.nominalRequired - ctx.omset)} (syarat > ${moneyFmt(ctx.nominalRequired)}${ctx.jumlahPaket > 1 ? ` untuk ${ctx.jumlahPaket} paket` : ''})`
       )
     }
-    return { tercapai: wajibHave >= wajibNeeded && (ctx.nominalRequired == null || ctx.omset > ctx.nominalRequired), kekurangan }
+    return { tercapai: wajibHave >= wajibNeeded && (ctx.nominalRequired == null || ctx.omset > ctx.nominalRequired), kekurangan, wajibNeeded }
   },
 
   'BUCKET SEAL': (ctx) => {
@@ -41,28 +52,28 @@ const RULES = {
   },
 
   KUNINGAN: (ctx) => {
-    const need = 2
+    const need = BASE_WAJIB_NEEDED.KUNINGAN * ctx.jumlahPaket
     const have = ctx.boughtItemNames.length
     const kekurangan = have < need
-      ? [`Varian item baru ${have}/${need}. Perlu beli minimal 1 varian berbeda lagi.`]
+      ? [`Varian item baru ${have}/${need}${ctx.jumlahPaket > 1 ? ` (${ctx.jumlahPaket} paket)` : ''}. Perlu beli minimal ${need - have} varian berbeda lagi.`]
       : []
-    return { tercapai: have >= need, kekurangan }
+    return { tercapai: have >= need, kekurangan, wajibNeeded: need }
   },
 
   PVCBV: (ctx) => {
-    const need = 2
+    const need = BASE_WAJIB_NEEDED.PVCBV * ctx.jumlahPaket
     const have = ctx.boughtItemNames.length
     const kekurangan = have < need
-      ? [`Varian item baru ${have}/${need}. Perlu beli minimal 1 varian berbeda lagi.`]
+      ? [`Varian item baru ${have}/${need}${ctx.jumlahPaket > 1 ? ` (${ctx.jumlahPaket} paket)` : ''}. Perlu beli minimal ${need - have} varian berbeda lagi.`]
       : []
-    return { tercapai: have >= need, kekurangan }
+    return { tercapai: have >= need, kekurangan, wajibNeeded: need }
   },
 
   'DISPLAY HOKI': (ctx) => {
     const kekurangan = []
     if (ctx.nominalRequired != null && ctx.omset < ctx.nominalRequired) {
       kekurangan.push(
-        `Omset kurang ${moneyDiff(ctx.nominalRequired - ctx.omset)} (syarat >= ${moneyFmt(ctx.nominalRequired)})`
+        `Omset kurang ${moneyDiff(ctx.nominalRequired - ctx.omset)} (syarat >= ${moneyFmt(ctx.nominalRequired)}${ctx.jumlahPaket > 1 ? ` untuk ${ctx.jumlahPaket} paket` : ''})`
       )
     }
     return { tercapai: ctx.nominalRequired == null ? ctx.omset > 0 : ctx.omset >= ctx.nominalRequired, kekurangan }
@@ -87,7 +98,7 @@ function inPeriod(dateIso, period) {
 }
 
 // Build lookup structures once per dataset
-export function buildProgramMeta(masterBarang, nominalWajib, periodeProgram) {
+export function buildProgramMeta(masterBarang, nominalWajib, periodeProgram, jumlahPaket = []) {
   const programs = new Map() // key `${supp}||${program}` -> meta
   for (const row of masterBarang) {
     const key = `${row.supp}||${row.program}`
@@ -115,12 +126,31 @@ export function buildProgramMeta(masterBarang, nominalWajib, periodeProgram) {
     itemIndex.get(ikey).push({ program: row.program, wajib: !!row.wajib })
   }
 
-  return { programs, nominalMap, periodeMap, itemIndex }
+  // Berapa paket program yang diambil tiap pelanggan (sheet/tabel "JUMLAH
+  // PAKET"). Dicocokkan dulu lewat KODE PELANGGAN (paling akurat), lalu
+  // fallback ke NAMA PELANGGAN (di-normalisasi) kalau kode kosong di sheet.
+  const paketByKode = new Map() // `${kodeToko}||${supp}||${program}` -> jumlah
+  const paketByNama = new Map() // `${NAMA}||${supp}||${program}` -> jumlah
+  for (const p of jumlahPaket) {
+    const jumlah = Number(p.jumlahPaket) > 0 ? Number(p.jumlahPaket) : 1
+    if (p.kodeToko) paketByKode.set(`${p.kodeToko}||${p.supp}||${p.program}`, jumlah)
+    else if (p.namaPelanggan) paketByNama.set(`${normName(p.namaPelanggan)}||${p.supp}||${p.program}`, jumlah)
+  }
+  function getJumlahPaket(kodeToko, namaPelanggan, supp, program) {
+    if (kodeToko && paketByKode.has(`${kodeToko}||${supp}||${program}`)) {
+      return paketByKode.get(`${kodeToko}||${supp}||${program}`)
+    }
+    const nk = `${normName(namaPelanggan)}||${supp}||${program}`
+    if (paketByNama.has(nk)) return paketByNama.get(nk)
+    return 1 // default: pelanggan biasa, tidak ikut paket berganda
+  }
+
+  return { programs, nominalMap, periodeMap, itemIndex, getJumlahPaket }
 }
 
-export function computeRecap(sales, masterBarang, nominalWajib, periodeProgram, opts = {}) {
+export function computeRecap(sales, masterBarang, nominalWajib, periodeProgram, jumlahPaket = [], opts = {}) {
   const ignorePeriod = !!opts.ignorePeriod
-  const meta = buildProgramMeta(masterBarang, nominalWajib, periodeProgram)
+  const meta = buildProgramMeta(masterBarang, nominalWajib, periodeProgram, jumlahPaket)
 
   const groups = new Map() // key kodeToko||supp||program
 
@@ -180,7 +210,12 @@ export function computeRecap(sales, masterBarang, nominalWajib, periodeProgram, 
     const wajibItemNames = (programMeta?.items || []).filter((i) => i.wajib).map((i) => i.namaBarang)
     const boughtItemNames = Array.from(g.items.keys())
     const wajibBoughtNames = boughtItemNames.filter((n) => wajibItemNames.includes(n))
-    const nominalRequired = meta.nominalMap.get(pkey) ?? null
+    const nominalRequiredBase = meta.nominalMap.get(pkey) ?? null
+
+    // Jumlah paket program yang diambil pelanggan ini (default 1). Syarat
+    // omset & syarat jumlah varian wajib program dikalikan angka ini.
+    const jumlahPaket = meta.getJumlahPaket(g.kodeToko, g.namaPelanggan, g.supp, g.program)
+    const nominalRequired = nominalRequiredBase != null ? nominalRequiredBase * jumlahPaket : null
 
     const ctx = {
       omset: g.omset,
@@ -189,6 +224,7 @@ export function computeRecap(sales, masterBarang, nominalWajib, periodeProgram, 
       boughtItemNames,
       wajibBoughtNames,
       nominalRequired,
+      jumlahPaket,
     }
 
     const rule = RULES[g.program]
@@ -206,12 +242,15 @@ export function computeRecap(sales, masterBarang, nominalWajib, periodeProgram, 
       period: g.period,
       periodeDipakai: !ignorePeriod && !!g.period,
       omset: g.omset,
+      jumlahPaket,
       nominalRequired,
+      nominalRequiredBase,
       varianDibeli: boughtItemNames.map((n) => g.items.get(n).namaBarang),
       varianCount: boughtItemNames.length,
       totalVarianProgram: allItemNames.length,
       itemWajibDibeli: wajibBoughtNames,
       itemWajibTotal: wajibItemNames,
+      itemWajibNeeded: result.wajibNeeded ?? null, // syarat jumlah varian (sudah dikali jumlahPaket), kalau berlaku utk program ini
       tercapai: result.tercapai,
       kekurangan: result.kekurangan,
       reward: REWARD_LABEL[g.program] || '-',

@@ -81,7 +81,16 @@ export default function DetailModal({ row, onClose }) {
           </button>
         </div>
 
-        <div className="px-6 py-4 grid grid-cols-2 md:grid-cols-4 gap-3 border-b border-sand-200">
+        <div className="px-6 py-4 grid grid-cols-2 md:grid-cols-5 gap-3 border-b border-sand-200">
+          <div>
+            <div className="text-[12px] text-ink-700/60">Jumlah paket</div>
+            <div className="font-bold text-ink-900">
+              {row.jumlahPaket}x
+              {row.jumlahPaket > 1 && row.nominalRequiredBase != null && (
+                <span className="text-[11.5px] font-normal text-ink-700/50"> ({formatRupiah(row.nominalRequiredBase)}/paket)</span>
+              )}
+            </div>
+          </div>
           <div>
             <div className="text-[12px] text-ink-700/60">Omset program</div>
             <div className="font-bold text-ink-900">{formatRupiah(row.omset)}</div>
@@ -92,7 +101,12 @@ export default function DetailModal({ row, onClose }) {
           </div>
           <div>
             <div className="text-[12px] text-ink-700/60">Varian dibeli</div>
-            <div className="font-bold text-ink-900">{row.varianCount} dari {row.totalVarianProgram}</div>
+            <div className="font-bold text-ink-900">
+              {row.varianCount} dari {row.totalVarianProgram}
+              {row.itemWajibNeeded != null && (
+                <div className="text-[11.5px] font-normal text-ink-700/50">wajib {row.itemWajibDibeli.length}/{row.itemWajibNeeded}</div>
+              )}
+            </div>
           </div>
           <div>
             <div className="text-[12px] text-ink-700/60">Status</div>

@@ -67,7 +67,21 @@ create table if not exists public.periode_program (
 
 comment on table public.periode_program is 'Periode berlaku tiap program per supplier';
 
--- ---------- 5. TABEL SYNC META (penanda versi data untuk cache di frontend) ----------
+-- ---------- 5. TABEL JUMLAH PAKET (dari MASTER_PROGRAM.xlsx > JUMLAH PAKET) ----------
+create table if not exists public.jumlah_paket (
+  id              bigint generated always as identity primary key,
+  kode_toko       text,          -- KODE PELANGGAN, boleh kosong kalau dicocokkan lewat nama
+  nama_pelanggan  text,
+  supp            text not null,
+  program         text not null,
+  jumlah_paket    integer not null default 1 check (jumlah_paket > 0),
+  created_at      timestamptz not null default now(),
+  unique (kode_toko, supp, program)
+);
+
+comment on table public.jumlah_paket is 'Berapa paket program yang diambil tiap pelanggan (per supp+program). Syarat omset (nominal_wajib) dan syarat jumlah varian wajib di src/lib/compute.js dikalikan angka ini; default 1 kalau pelanggan tidak terdaftar di sini.';
+
+-- ---------- 6. TABEL SYNC META (penanda versi data untuk cache di frontend) ----------
 create table if not exists public.sync_meta (
   id             int primary key default 1,
   last_synced_at timestamptz not null default now(),
@@ -93,6 +107,9 @@ create index if not exists idx_sales_depo_kota    on public.sales (depo, kota);
 create index if not exists idx_master_barang_supp_program on public.master_barang (supp, program);
 create index if not exists idx_master_barang_supp_nama    on public.master_barang (supp, upper(trim(nama_barang)));
 
+create index if not exists idx_jumlah_paket_kode_toko on public.jumlah_paket (kode_toko);
+create index if not exists idx_jumlah_paket_supp_program on public.jumlah_paket (supp, program);
+
 -- ============================================================
 -- ROW LEVEL SECURITY
 -- Dashboard ini membaca data langsung dari browser (client-side),
@@ -104,6 +121,7 @@ alter table public.sales           enable row level security;
 alter table public.master_barang   enable row level security;
 alter table public.nominal_wajib   enable row level security;
 alter table public.periode_program enable row level security;
+alter table public.jumlah_paket    enable row level security;
 alter table public.sync_meta       enable row level security;
 
 create policy "Allow read access - sales"
@@ -123,6 +141,11 @@ create policy "Allow read access - nominal_wajib"
 
 create policy "Allow read access - periode_program"
   on public.periode_program for select
+  to authenticated, anon
+  using (true);
+
+create policy "Allow read access - jumlah_paket"
+  on public.jumlah_paket for select
   to authenticated, anon
   using (true);
 

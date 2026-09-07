@@ -4,7 +4,7 @@ import { computeRecap } from '../lib/compute'
 
 const DataContext = createContext(null)
 
-const EMPTY = { sales: [], masterBarang: [], nominalWajib: [], periodeProgram: [] }
+const EMPTY = { sales: [], masterBarang: [], nominalWajib: [], periodeProgram: [], jumlahPaket: [] }
 
 export function DataProvider({ children }) {
   const [raw, setRaw] = useState(EMPTY)
@@ -39,13 +39,13 @@ export function DataProvider({ children }) {
 
   const meta = {
     salesFileName: 'Supabase: sales',
-    masterFileName: 'Supabase: master_barang, nominal_wajib, periode_program',
+    masterFileName: 'Supabase: master_barang, nominal_wajib, periode_program, jumlah_paket',
     lastSyncedAt,
     fromCache,
   }
 
   const recap = useMemo(
-    () => computeRecap(raw.sales, raw.masterBarang, raw.nominalWajib, raw.periodeProgram, { ignorePeriod }),
+    () => computeRecap(raw.sales, raw.masterBarang, raw.nominalWajib, raw.periodeProgram, raw.jumlahPaket, { ignorePeriod }),
     [raw, ignorePeriod]
   )
 

@@ -15,6 +15,7 @@ const EXPORT_COLUMNS = [
   { label: 'Sales', key: 'salesFaktur', width: 16 },
   { label: 'Supplier', key: 'supp', width: 12 },
   { label: 'Program', key: 'program', width: 14 },
+  { label: 'Jumlah Paket', key: 'jumlahPaket', width: 12, align: 'center' },
   { label: 'Omset', key: 'omset', width: 18, numFmt: '#,##0', align: 'right' },
   { label: 'Varian Dibeli', value: (r) => `${r.varianCount}/${r.totalVarianProgram}`, width: 14, align: 'center' },
   { label: 'Status', value: (r) => (r.tercapai ? 'Tercapai' : 'Belum Tercapai'), width: 16, align: 'center' },
@@ -113,6 +114,7 @@ export default function RecapTable({ recap }) {
                 <th className="text-left px-4 py-3 font-medium">Sales</th>
                 <th className="text-left px-4 py-3 font-medium">Supp</th>
                 <th className="text-left px-4 py-3 font-medium">Program</th>
+                <th className="text-center px-4 py-3 font-medium">Paket</th>
                 <th className="text-right px-4 py-3 font-medium">Omset</th>
                 <th className="text-left px-4 py-3 font-medium">Realisasi</th>
                 <th className="text-left px-4 py-3 font-medium">Status</th>
@@ -134,11 +136,20 @@ export default function RecapTable({ recap }) {
                     <span className="px-2 py-0.5 rounded-md bg-ink-900/5 text-ink-800 text-[12px] font-medium">{r.supp}</span>
                   </td>
                   <td className="px-4 py-3 text-ink-700">{r.program}</td>
+                  <td className="px-4 py-3 text-center">
+                    {r.jumlahPaket > 1 ? (
+                      <span className="px-2 py-0.5 rounded-md bg-brass-500/10 text-brass-600 text-[12px] font-semibold">{r.jumlahPaket}x</span>
+                    ) : (
+                      <span className="text-ink-700/40 text-[12px]">1x</span>
+                    )}
+                  </td>
                   <td className="px-4 py-3 text-right font-medium whitespace-nowrap">{formatRupiah(r.omset)}</td>
                   <td className="px-4 py-3 whitespace-nowrap">
                     {r.varianCount}/{r.totalVarianProgram} varian
                     {r.itemWajibTotal.length > 0 && (
-                      <div className="text-[11.5px] text-ink-700/50">wajib {r.itemWajibDibeli.length}/{r.itemWajibTotal.length}</div>
+                      <div className="text-[11.5px] text-ink-700/50">
+                        wajib {r.itemWajibDibeli.length}/{r.itemWajibNeeded ?? r.itemWajibTotal.length}
+                      </div>
                     )}
                   </td>
                   <td className="px-4 py-3"><StatusBadge tercapai={r.tercapai} /></td>
@@ -147,7 +158,7 @@ export default function RecapTable({ recap }) {
               ))}
               {pageRows.length === 0 && (
                 <tr>
-                  <td colSpan={10} className="px-4 py-10 text-center text-ink-700/50">
+                  <td colSpan={11} className="px-4 py-10 text-center text-ink-700/50">
                     Tidak ada data yang cocok dengan filter saat ini.
                   </td>
                 </tr>

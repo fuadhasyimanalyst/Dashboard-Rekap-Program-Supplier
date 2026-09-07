@@ -130,7 +130,33 @@ function parseMasterWorkbook(wb) {
     }
   }
 
-  return { masterBarang, nominalWajib, periodeProgram }
+  // Sheet baru: "JUMLAH PAKET" -> berapa paket program yang diambil tiap
+  // pelanggan. Syarat omset & syarat item wajib pada compute.js akan
+  // dikalikan dengan angka ini (default 1 kalau pelanggan tidak ada di
+  // sheet ini / tidak ikut paket berganda).
+  const jumlahPaket = []
+  const paketSheetName = findSheet('JUMLAH PAKET')
+  if (paketSheetName) {
+    const kRows = sheetToRows(wb.Sheets[paketSheetName])
+    const kIdx = buildIndex(kRows[0])
+    for (let r = 1; r < kRows.length; r++) {
+      const row = kRows[r]
+      if (!row || row.every((c) => c == null)) continue
+      const supp = get(row, kIdx, 'SUPP')
+      const program = get(row, kIdx, 'PROGRAM')
+      if (!supp || !program) continue
+      const jumlah = Number(get(row, kIdx, 'JUMLAH PAKET', ['PAKET', 'JML PAKET']))
+      jumlahPaket.push({
+        kodeToko: get(row, kIdx, 'KODE PELANGGAN', ['KODE TOKO']),
+        namaPelanggan: get(row, kIdx, 'NAMA PELANGGAN'),
+        supp,
+        program: String(program).trim(),
+        jumlahPaket: jumlah > 0 ? jumlah : 1,
+      })
+    }
+  }
+
+  return { masterBarang, nominalWajib, periodeProgram, jumlahPaket }
 }
 
 export async function loadAllData() {
@@ -139,6 +165,6 @@ export async function loadAllData() {
     fetchWorkbook(MASTER_URL),
   ])
   const sales = parseSalesWorkbook(salesWb)
-  const { masterBarang, nominalWajib, periodeProgram } = parseMasterWorkbook(masterWb)
-  return { sales, masterBarang, nominalWajib, periodeProgram }
+  const { masterBarang, nominalWajib, periodeProgram, jumlahPaket } = parseMasterWorkbook(masterWb)
+  return { sales, masterBarang, nominalWajib, periodeProgram, jumlahPaket }
 }
