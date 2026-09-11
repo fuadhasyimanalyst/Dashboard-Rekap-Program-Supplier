@@ -311,6 +311,14 @@ async function main() {
   await upsertBatched('rekapan_program', rekapanProgram)
   await upsertBatched('data_penjualan', dataPenjualan)
 
+  console.log('\nUpdate waktu sync (sync_meta)...')
+  const { error: metaErr } = await supabase.from('sync_meta').upsert({ id: 1, last_synced_at: new Date().toISOString() })
+  if (metaErr) {
+    // Tidak fatal -- data utama sudah berhasil ke-upload. Kemungkinan besar
+    // tabel sync_meta belum dibuat (jalankan ulang supabase/schema.sql).
+    console.warn('Peringatan: gagal update sync_meta:', metaErr.message)
+  }
+
   console.log('\nSelesai. Data sudah dipindahkan ke Supabase.')
 }
 

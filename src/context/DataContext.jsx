@@ -37,6 +37,10 @@ export function DataProvider({ children }) {
   // caching tidak dipakai).
   const [cacheStatus, setCacheStatus] = useState(null)
   const [cachedAt, setCachedAt] = useState(null)
+  // Kapan terakhir `npm run import:supabase` benar-benar dijalankan
+  // (server-side, dari tabel sync_meta) -- beda dari cachedAt yang cuma
+  // "kapan browser ini terakhir fetch". null di mode lokal (tidak relevan).
+  const [lastSyncedAt, setLastSyncedAt] = useState(null)
   // default false: setiap baris di INPUT_REKAPAN_PROGRAM sudah membawa
   // AWAL PROGRAM / AKHIR PROGRAM sendiri, jadi periode itu dipakai secara
   // default supaya rekap selalu sesuai dengan yang tertulis di Excel.
@@ -53,7 +57,9 @@ export function DataProvider({ children }) {
     if (CACHE_ENABLED && !force) {
       const cached = readCache(CACHE_KEY, CACHE_TTL_MS)
       if (cached) {
-        setRaw(cached.data)
+        const { lastSyncedAt: cachedSyncedAt, ...rest } = cached.data
+        setRaw(rest)
+        setLastSyncedAt(cachedSyncedAt ?? null)
         setCacheStatus('HIT')
         setCachedAt(cached.savedAt)
         setStatus('ready')
@@ -65,7 +71,9 @@ export function DataProvider({ children }) {
 
     loadAllData()
       .then((data) => {
-        setRaw(data)
+        const { lastSyncedAt: freshSyncedAt, ...rest } = data
+        setRaw(rest)
+        setLastSyncedAt(freshSyncedAt ?? null)
         setStatus('ready')
         if (CACHE_ENABLED) {
           writeCache(CACHE_KEY, data)
@@ -109,7 +117,7 @@ export function DataProvider({ children }) {
   const value = {
     ...raw, meta, status, errorMsg,
     reload: () => load({ force: true }),
-    cacheStatus, cachedAt,
+    cacheStatus, cachedAt, lastSyncedAt,
     ignorePeriod, setIgnorePeriod,
     recap,
     kekuranganPaket,

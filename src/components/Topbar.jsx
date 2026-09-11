@@ -1,6 +1,7 @@
 import React from 'react'
 import { CalendarClock, DatabaseZap, PanelLeftOpen, RefreshCw, Zap, ZapOff } from 'lucide-react'
 import { useData } from '../context/DataContext'
+import { formatDateTime } from '../lib/format'
 
 const TITLES = {
   overview: 'Ringkasan',
@@ -52,7 +53,7 @@ function CacheBadge() {
 }
 
 export default function Topbar({ active, sidebarHidden, onShowSidebar }) {
-  const { ignorePeriod, setIgnorePeriod, meta } = useData()
+  const { ignorePeriod, setIgnorePeriod, meta, lastSyncedAt } = useData()
 
   return (
     <header className="sticky top-0 z-20 bg-sand-50/90 backdrop-blur border-b border-sand-200 px-5 md:px-8 py-4 flex flex-wrap items-center justify-between gap-3">
@@ -71,6 +72,11 @@ export default function Topbar({ active, sidebarHidden, onShowSidebar }) {
           <div className="text-[13px] text-ink-700/70 flex items-center gap-1.5 mt-0.5">
             <DatabaseZap size={13} />
             Sumber data: {meta.source === 'supabase' ? 'Supabase' : 'Excel lokal (public/data/)'}
+            {meta.source === 'supabase' && (
+              <span className="text-ink-700/50">
+                · Sync terakhir: {lastSyncedAt ? formatDateTime(lastSyncedAt) : 'belum pernah (jalankan npm run import:supabase)'}
+              </span>
+            )}
           </div>
         </div>
       </div>
