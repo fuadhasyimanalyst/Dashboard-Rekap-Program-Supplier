@@ -161,7 +161,7 @@ function readRekapanProgram(filePath) {
   const wb = XLSX.readFile(filePath, { cellDates: true })
   const out = []
   const seenKeys = new Map() // `${supp}||${kodeToko}||${program}||${awalProgram}` -> index di out
-  const dupes = [] // duplikat yg isinya BEDA (perlu dicek manual)
+  const merged = [] // baris kombinasi sama tapi datanya beda -> DIGABUNG (bukan dibuang)
   const exactDupes = [] // duplikat identik (aman, cuma dilaporkan biar jumlah baris jelas)
   const skippedEmpty = [] // baris yg KODE TOKO / PROGRAM-nya kosong
 
@@ -207,10 +207,24 @@ function readRekapanProgram(filePath) {
 
       // Tabel rekapan_program punya unique constraint di kombinasi
       // (supp, kode_toko, program, awal_program). Excel-nya kadang ada
-      // baris kepencet dobel utk kombinasi yg sama -> digabung di sini
-      // (baris pertama yg dipakai) supaya insert tidak crash. Kalau
-      // isinya ternyata beda (bukan cuma dobel-ketik), dilaporkan sbg
-      // warning supaya bisa dicek manual mana yang benar.
+      // baris kepencet dobel utk kombinasi yg sama, TAPI kadang itu bukan
+      // salah ketik -- toko yang sama mengajukan paket LAGI di periode
+      // program yang sama (mis. paket 1 lalu nyusul paket 2). Membuang
+      // salah satu baris di kasus ini salah, karena paket yang diajukan
+      // jadi hilang dari rekap.
+      //
+      // Jadi sekarang baris dgn kombinasi sama DIGABUNG jadi satu (bukan
+      // dibuang):
+      //   - pengajuan_paket -> DIJUMLAH (1 + 2 = 3 paket)
+      //   - form_fisik      -> AND (baru dianggap "sudah sampai" kalau
+      //                        SEMUA form dari tiap pengajuan sudah masuk)
+      //   - target_nominal  -> DIJUMLAH kalau dua-duanya ada; kalau cuma
+      //                        satu yang ada, pakai yang ada itu
+      //   - akhir_program   -> ambil yang PALING AKHIR (max)
+      //   - kolom lain (nama, alamat, depo, salesman, form fisik lama)
+      //     tetap pakai baris pertama
+      // Kalau isinya identik 100%, tetap dilaporkan sbg exact-dupe biar
+      // gampang dicek, tapi hasilnya sama saja (gabung ke 1 baris).
       const dedupeKey = `${supp}||${entry.kode_toko.toUpperCase()}||${entry.program.toUpperCase()}||${entry.awal_program ?? ''}`
       if (seenKeys.has(dedupeKey)) {
         const prevIdx = seenKeys.get(dedupeKey)
@@ -221,8 +235,19 @@ function readRekapanProgram(filePath) {
           && prev.akhir_program === entry.akhir_program
         if (sameData) {
           exactDupes.push({ sheetName, kodeToko: entry.kode_toko, program: entry.program })
-        } else {
-          dupes.push({ sheetName, kodeToko: entry.kode_toko, program: entry.program, prev, entry })
+          continue
+        }
+
+        merged.push({ sheetName, kodeToko: entry.kode_toko, program: entry.program, prev: { ...prev }, entry })
+
+        out[prevIdx] = {
+          ...prev,
+          pengajuan_paket: prev.pengajuan_paket + entry.pengajuan_paket,
+          form_fisik: prev.form_fisik && entry.form_fisik,
+          target_nominal: prev.target_nominal == null && entry.target_nominal == null
+            ? null
+            : (prev.target_nominal ?? 0) + (entry.target_nominal ?? 0),
+          akhir_program: [prev.akhir_program, entry.akhir_program].filter(Boolean).sort().pop() ?? null,
         }
         continue
       }
@@ -230,7 +255,7 @@ function readRekapanProgram(filePath) {
       out.push(entry)
     }
   }
-  return { rows: out, dupes, exactDupes, skippedEmpty }
+  return { rows: out, merged, exactDupes, skippedEmpty }
 }
 
 // ---------------------------------------------------------------------------
@@ -291,7 +316,7 @@ async function main() {
   console.log(`Membaca file dari: ${SRC_DIR}`)
 
   const masterBarang = readMasterBarang(FILES.masterBarang)
-  const { rows: rekapanProgram, dupes: rekapanDupes, exactDupes: rekapanExactDupes, skippedEmpty: rekapanSkippedEmpty } = readRekapanProgram(FILES.rekapan)
+  const { rows: rekapanProgram, merged: rekapanMerged, exactDupes: rekapanExactDupes, skippedEmpty: rekapanSkippedEmpty } = readRekapanProgram(FILES.rekapan)
   const dataPenjualan = readDataPenjualan(FILES.penjualan)
 
   console.log(`  MASTER_BARANG.xlsx          -> ${masterBarang.length} baris`)
@@ -314,12 +339,14 @@ async function main() {
     if (rekapanExactDupes.length > 20) console.log(`   ...dan ${rekapanExactDupes.length - 20} baris lainnya`)
   }
 
-  if (rekapanDupes.length > 0) {
-    console.log(`\nPERINGATAN: ${rekapanDupes.length} baris di INPUT_REKAPAN_PROGRAM.xlsx punya SUPP+KODE TOKO+PROGRAM+AWAL PROGRAM yang sama tapi isinya beda (cuma baris pertama yang dipakai, cek manual mana yang benar):`)
-    for (const d of rekapanDupes.slice(0, 20)) {
-      console.log(`   - [sheet ${d.sheetName}] ${d.kodeToko} / ${d.program}: pengajuan_paket ${d.prev.pengajuan_paket} vs ${d.entry.pengajuan_paket}`)
+  if (rekapanMerged.length > 0) {
+    console.log(`\nInfo: ${rekapanMerged.length} baris di INPUT_REKAPAN_PROGRAM.xlsx punya SUPP+KODE TOKO+PROGRAM+AWAL PROGRAM yang sama tapi isinya beda -- diperlakukan sbg PENGAJUAN TAMBAHAN dan DIGABUNG (pengajuan_paket dijumlah, bukan dibuang):`)
+    for (const d of rekapanMerged.slice(0, 20)) {
+      const gabungan = d.prev.pengajuan_paket + d.entry.pengajuan_paket
+      console.log(`   - [sheet ${d.sheetName}] ${d.kodeToko} / ${d.program}: pengajuan_paket ${d.prev.pengajuan_paket} + ${d.entry.pengajuan_paket} = ${gabungan}`)
     }
-    if (rekapanDupes.length > 20) console.log(`   ...dan ${rekapanDupes.length - 20} baris lainnya`)
+    if (rekapanMerged.length > 20) console.log(`   ...dan ${rekapanMerged.length - 20} baris lainnya`)
+    console.log(`   Kalau ada kasus yang SEHARUSNYA tidak digabung (misal beda periode program tapi kebetulan kena kunci sama), cek daftar di atas manual.`)
   }
 
   console.log('\nMengosongkan tabel lama (full refresh)...')
