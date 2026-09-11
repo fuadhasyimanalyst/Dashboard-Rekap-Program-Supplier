@@ -94,7 +94,7 @@ export function DataProvider({ children }) {
   }
 
   const recap = useMemo(
-    () => computeRecap(raw.sales, raw.masterBarang, raw.nominalWajib, raw.periodeProgram, { ignorePeriod }),
+    () => computeRecap(raw.sales, raw.masterBarang, raw.rekapanProgram, { ignorePeriod }),
     [raw, ignorePeriod]
   )
 

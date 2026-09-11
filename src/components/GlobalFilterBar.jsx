@@ -16,8 +16,10 @@ function Select({ value, onChange, options, placeholder }) {
   )
 }
 
-export const EMPTY_GLOBAL_FILTERS = { program: '', supp: '', depo: '', kota: '', sales: '', status: '' }
+export const EMPTY_GLOBAL_FILTERS = { program: '', supp: '', depo: '', kota: '', sales: '', bulan: '', status: '' }
 
+// Urutan filter: Depo, Sales, Bulan, Supplier, Program, Status (sesuai
+// permintaan), lalu Kota di paling akhir sebagai filter tambahan.
 export default function GlobalFilterBar({ filters, setFilters, options }) {
   const update = (key) => (val) => setFilters((f) => ({ ...f, [key]: val }))
   const activeCount = Object.values(filters).filter(Boolean).length
@@ -28,20 +30,21 @@ export default function GlobalFilterBar({ filters, setFilters, options }) {
         <SlidersHorizontal size={15} />
         Filter utama
       </div>
-      <Select value={filters.program} onChange={update('program')} options={options.program} placeholder="Semua Program" />
-      <Select value={filters.supp} onChange={update('supp')} options={options.supp} placeholder="Semua Supplier" />
       <Select value={filters.depo} onChange={update('depo')} options={options.depo} placeholder="Semua Depo" />
-      <Select value={filters.kota} onChange={update('kota')} options={options.kota} placeholder="Semua Kota" />
       <Select value={filters.sales} onChange={update('sales')} options={options.sales} placeholder="Semua Sales" />
+      <Select value={filters.bulan} onChange={update('bulan')} options={options.bulan} placeholder="Semua Bulan" />
+      <Select value={filters.supp} onChange={update('supp')} options={options.supp} placeholder="Semua Supplier" />
+      <Select value={filters.program} onChange={update('program')} options={options.program} placeholder="Semua Program" />
       <Select
         value={filters.status}
         onChange={update('status')}
         options={['Tercapai', 'Belum Tercapai']}
         placeholder="Semua Status"
       />
+      <Select value={filters.kota} onChange={update('kota')} options={options.kota} placeholder="Semua Kota" />
       {activeCount > 0 && (
         <button
-          onClick={() => setFilters(() => ({ program: '', supp: '', depo: '', kota: '', sales: '', status: '' }))}
+          onClick={() => setFilters(() => ({ ...EMPTY_GLOBAL_FILTERS }))}
           className="flex items-center gap-1 text-[12.5px] text-clay-600 hover:text-clay-700 px-2 py-1.5 rounded-lg hover:bg-clay-500/10 ml-auto"
         >
           <X size={13} /> Reset filter ({activeCount})
