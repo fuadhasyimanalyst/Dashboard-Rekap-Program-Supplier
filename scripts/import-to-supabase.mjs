@@ -161,7 +161,9 @@ function readRekapanProgram(filePath) {
   const wb = XLSX.readFile(filePath, { cellDates: true })
   const out = []
   const seenKeys = new Map() // `${supp}||${kodeToko}||${program}||${awalProgram}` -> index di out
-  const dupes = []
+  const dupes = [] // duplikat yg isinya BEDA (perlu dicek manual)
+  const exactDupes = [] // duplikat identik (aman, cuma dilaporkan biar jumlah baris jelas)
+  const skippedEmpty = [] // baris yg KODE TOKO / PROGRAM-nya kosong
 
   for (const sheetName of wb.SheetNames) {
     const rows = sheetToRows(wb.Sheets[sheetName])
@@ -174,7 +176,12 @@ function readRekapanProgram(filePath) {
       if (!row || row.every((c) => c == null)) continue
       const kodeToko = get(row, idx, 'KODE TOKO', ['KD TOKO'])
       const program = get(row, idx, 'PROGRAM')
-      if (!kodeToko || !program) continue
+      if (!kodeToko || !program) {
+        // baris r di sini 0-based dari sheetToRows (header=row 0), jadi baris
+        // asli di Excel = r + 1 (karena header ada di baris 1 Excel)
+        skippedEmpty.push({ sheetName, excelRow: r + 1, kodeToko: kodeToko || '(kosong)', program: program || '(kosong)' })
+        continue
+      }
 
       const entry = {
         supp,
@@ -212,7 +219,9 @@ function readRekapanProgram(filePath) {
           && prev.form_fisik === entry.form_fisik
           && prev.target_nominal === entry.target_nominal
           && prev.akhir_program === entry.akhir_program
-        if (!sameData) {
+        if (sameData) {
+          exactDupes.push({ sheetName, kodeToko: entry.kode_toko, program: entry.program })
+        } else {
           dupes.push({ sheetName, kodeToko: entry.kode_toko, program: entry.program, prev, entry })
         }
         continue
@@ -221,7 +230,7 @@ function readRekapanProgram(filePath) {
       out.push(entry)
     }
   }
-  return { rows: out, dupes }
+  return { rows: out, dupes, exactDupes, skippedEmpty }
 }
 
 // ---------------------------------------------------------------------------
@@ -282,12 +291,28 @@ async function main() {
   console.log(`Membaca file dari: ${SRC_DIR}`)
 
   const masterBarang = readMasterBarang(FILES.masterBarang)
-  const { rows: rekapanProgram, dupes: rekapanDupes } = readRekapanProgram(FILES.rekapan)
+  const { rows: rekapanProgram, dupes: rekapanDupes, exactDupes: rekapanExactDupes, skippedEmpty: rekapanSkippedEmpty } = readRekapanProgram(FILES.rekapan)
   const dataPenjualan = readDataPenjualan(FILES.penjualan)
 
   console.log(`  MASTER_BARANG.xlsx          -> ${masterBarang.length} baris`)
   console.log(`  INPUT_REKAPAN_PROGRAM.xlsx  -> ${rekapanProgram.length} baris`)
   console.log(`  DATA_PENJUALAN.xlsx         -> ${dataPenjualan.length} baris`)
+
+  if (rekapanSkippedEmpty.length > 0) {
+    console.log(`\nPERINGATAN: ${rekapanSkippedEmpty.length} baris di INPUT_REKAPAN_PROGRAM.xlsx dilewati (KODE TOKO atau PROGRAM kosong):`)
+    for (const s of rekapanSkippedEmpty.slice(0, 20)) {
+      console.log(`   - [sheet ${s.sheetName}, baris excel ~${s.excelRow}] KODE TOKO: ${s.kodeToko} / PROGRAM: ${s.program}`)
+    }
+    if (rekapanSkippedEmpty.length > 20) console.log(`   ...dan ${rekapanSkippedEmpty.length - 20} baris lainnya`)
+  }
+
+  if (rekapanExactDupes.length > 0) {
+    console.log(`\nInfo: ${rekapanExactDupes.length} baris di INPUT_REKAPAN_PROGRAM.xlsx adalah duplikat identik (baris ke-input dobel persis sama) -- otomatis digabung jadi 1, aman diabaikan:`)
+    for (const d of rekapanExactDupes.slice(0, 20)) {
+      console.log(`   - [sheet ${d.sheetName}] ${d.kodeToko} / ${d.program}`)
+    }
+    if (rekapanExactDupes.length > 20) console.log(`   ...dan ${rekapanExactDupes.length - 20} baris lainnya`)
+  }
 
   if (rekapanDupes.length > 0) {
     console.log(`\nPERINGATAN: ${rekapanDupes.length} baris di INPUT_REKAPAN_PROGRAM.xlsx punya SUPP+KODE TOKO+PROGRAM+AWAL PROGRAM yang sama tapi isinya beda (cuma baris pertama yang dipakai, cek manual mana yang benar):`)
