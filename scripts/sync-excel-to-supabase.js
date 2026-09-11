@@ -36,6 +36,10 @@ const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY)
 const salesPath = process.argv[2] || 'public/data/DATA_PENJUALAN.xlsx'
 const masterPath = process.argv[3] || 'public/data/MASTER_PROGRAM.xlsx'
 
+function normKey(s) {
+  return (s || '').toString().trim().toUpperCase()
+}
+
 function sheetToRows(ws) {
   return XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: null })
 }
@@ -166,6 +170,8 @@ function parseMaster(filePath) {
   // src/lib/compute.js dikalikan angka ini per pelanggan+supp+program.
   const jumlahPaket = []
   const jumlahPaketSkipped = [] // baris yg gagal ditentukan SUPP-nya, utk dilaporkan
+  const jumlahPaketDupes = [] // baris duplikat (kode_toko+supp+program sama), utk dilaporkan
+  const seenKeys = new Map() // `${kode_toko}||${supp}||${program}` -> index di array jumlahPaket
   const paketSheetName = findSheet('JUMLAH PAKET')
   if (paketSheetName) {
     const kRows = sheetToRows(wb.Sheets[paketSheetName])
@@ -194,18 +200,35 @@ function parseMaster(filePath) {
         }
       }
 
+      const kodeToko = get(row, kIdx, 'KODE PELANGGAN', ['KODE TOKO'])
       const jumlah = Number(get(row, kIdx, 'JUMLAH PAKET', ['PAKET', 'JML PAKET']))
-      jumlahPaket.push({
-        kode_toko: get(row, kIdx, 'KODE PELANGGAN', ['KODE TOKO']),
+      const entry = {
+        kode_toko: kodeToko,
         nama_pelanggan: get(row, kIdx, 'NAMA PELANGGAN'),
         supp,
         program: String(program).trim(),
         jumlah_paket: jumlah > 0 ? jumlah : 1,
-      })
+      }
+
+      // Excel-nya kadang ada baris kepencet dobel (sama kode_toko+supp+program).
+      // Supabase punya unique constraint utk kombinasi itu, jadi baris dobel
+      // digabung: kalau isinya beda, dilaporkan sbg warning (perlu dicek manual);
+      // kalau identik, cukup diabaikan diam-diam (memang cuma salah ketik dobel).
+      const dedupeKey = `${normKey(kodeToko)}||${normKey(supp)}||${progKey}`
+      if (seenKeys.has(dedupeKey)) {
+        const prevIdx = seenKeys.get(dedupeKey)
+        const prev = jumlahPaket[prevIdx]
+        if (prev.jumlah_paket !== entry.jumlah_paket) {
+          jumlahPaketDupes.push({ kodeToko, supp, program: entry.program, values: [prev.jumlah_paket, entry.jumlah_paket] })
+        }
+        continue // baris pertama yang dipakai, baris dobel berikutnya diabaikan
+      }
+      seenKeys.set(dedupeKey, jumlahPaket.length)
+      jumlahPaket.push(entry)
     }
   }
 
-  return { masterBarang, nominalWajib, periodeProgram, jumlahPaket, jumlahPaketSkipped }
+  return { masterBarang, nominalWajib, periodeProgram, jumlahPaket, jumlahPaketSkipped, jumlahPaketDupes }
 }
 
 async function replaceTable(table, rows) {
@@ -232,7 +255,7 @@ async function replaceTable(table, rows) {
 async function main() {
   console.log(`Membaca ${salesPath} & ${masterPath} ...`)
   const sales = parseSales(path.resolve(salesPath))
-  const { masterBarang, nominalWajib, periodeProgram, jumlahPaket, jumlahPaketSkipped } = parseMaster(path.resolve(masterPath))
+  const { masterBarang, nominalWajib, periodeProgram, jumlahPaket, jumlahPaketSkipped, jumlahPaketDupes } = parseMaster(path.resolve(masterPath))
 
   console.log(
     `Ditemukan: ${sales.length} baris sales, ${masterBarang.length} master barang, ` +
@@ -246,6 +269,14 @@ async function main() {
       console.log(`   - ${s.kodeToko || '(kode kosong)'} / ${s.program}: ${s.reason}`)
     }
     if (jumlahPaketSkipped.length > 20) console.log(`   ...dan ${jumlahPaketSkipped.length - 20} baris lainnya`)
+    console.log('')
+  }
+
+  if (jumlahPaketDupes.length > 0) {
+    console.log(`PERINGATAN: ${jumlahPaketDupes.length} baris di sheet JUMLAH PAKET punya kode_toko+program yang sama tapi JUMLAH PAKET beda (cuma baris pertama yang dipakai, cek manual mana yang benar):`)
+    for (const d of jumlahPaketDupes.slice(0, 20)) {
+      console.log(`   - ${d.kodeToko} / ${d.supp} / ${d.program}: ${d.values.join(' vs ')}`)
+    }
     console.log('')
   }
 

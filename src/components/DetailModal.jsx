@@ -81,16 +81,7 @@ export default function DetailModal({ row, onClose }) {
           </button>
         </div>
 
-        <div className="px-6 py-4 grid grid-cols-2 md:grid-cols-5 gap-3 border-b border-sand-200">
-          <div>
-            <div className="text-[12px] text-ink-700/60">Jumlah paket</div>
-            <div className="font-bold text-ink-900">
-              {row.jumlahPaket}x
-              {row.jumlahPaket > 1 && row.nominalRequiredBase != null && (
-                <span className="text-[11.5px] font-normal text-ink-700/50"> ({formatRupiah(row.nominalRequiredBase)}/paket)</span>
-              )}
-            </div>
-          </div>
+        <div className="px-6 py-4 grid grid-cols-2 md:grid-cols-4 gap-3 border-b border-sand-200">
           <div>
             <div className="text-[12px] text-ink-700/60">Omset program</div>
             <div className="font-bold text-ink-900">{formatRupiah(row.omset)}</div>
@@ -101,46 +92,13 @@ export default function DetailModal({ row, onClose }) {
           </div>
           <div>
             <div className="text-[12px] text-ink-700/60">Varian dibeli</div>
-            <div className="font-bold text-ink-900">
-              {row.varianCount} dari {row.totalVarianProgram}
-              {row.itemWajibNeeded != null && (
-                <div className="text-[11.5px] font-normal text-ink-700/50">wajib {row.itemWajibDibeli.length}/{row.itemWajibNeeded}</div>
-              )}
-            </div>
+            <div className="font-bold text-ink-900">{row.varianCount} dari {row.totalVarianProgram}</div>
           </div>
           <div>
             <div className="text-[12px] text-ink-700/60">Status</div>
             <StatusBadge tercapai={row.tercapai} />
           </div>
         </div>
-
-        {row.paketProgress && (
-          <div className="px-6 py-4 border-b border-sand-200">
-            <div className="text-[12.5px] text-ink-700/60 mb-2">Rincian per paket</div>
-            <div className="flex flex-wrap gap-1.5">
-              {Array.from({ length: row.paketProgress.totalPaket }).map((_, i) => {
-                const done = i < row.paketProgress.paketTerpenuhi
-                const isNext = i === row.paketProgress.paketTerpenuhi
-                return (
-                  <span
-                    key={i}
-                    className={`px-2.5 py-1 rounded-lg text-[12.5px] font-medium flex items-center gap-1.5 ${
-                      done ? 'bg-pine-500/10 text-pine-600' : 'bg-clay-500/10 text-clay-600'
-                    }`}
-                  >
-                    {done ? <CheckCircle2 size={13} /> : <Circle size={13} />}
-                    Paket {i + 1}
-                  </span>
-                )
-              })}
-            </div>
-            {row.paketProgress.nextGap && (
-              <div className="text-[13px] text-clay-600 mt-2">
-                Untuk paket ke-{row.paketProgress.paketTerpenuhi + 1}: <b>{row.paketProgress.nextGap}</b>
-              </div>
-            )}
-          </div>
-        )}
 
         <div className="px-6 py-4 border-b border-sand-200">
           <div className="text-[12.5px] text-ink-700/60 mb-2">Periode program: {formatDateRange(row.period?.awal, row.period?.akhir)}</div>

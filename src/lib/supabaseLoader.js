@@ -1,181 +1,112 @@
-import { supabase, supabaseConfigured } from './supabaseClient'
+import { supabase } from './supabaseClient'
 
-// PostgREST membatasi 1000 baris per request secara default, jadi
-// tabel sales (bisa >5000 baris) perlu diambil per halaman lalu digabung.
-const PAGE_SIZE = 1000
-
-// Cache di localStorage browser, supaya tidak perlu fetch ulang ribuan
-// baris tiap kali dashboard dibuka. Cache dianggap basi (dan di-refresh
-// otomatis) begitu "last_synced_at" di tabel sync_meta berubah — yaitu
-// begitu ada `npm run sync` baru dari Excel.
-const CACHE_VERSION_KEY = 'rekap_program_cache_version'
-const CACHE_DATA_KEY = 'rekap_program_cache_data'
-
-async function fetchAllRows(table, columns) {
+// Supabase membatasi tiap request ke maksimum ~1000 baris, jadi tabel besar
+// (data_penjualan bisa ribuan baris) harus diambil per-halaman.
+async function fetchAll(table, { select = '*', pageSize = 1000, order } = {}) {
+  const out = []
   let from = 0
-  let all = []
-  while (true) {
-    const to = from + PAGE_SIZE - 1
-    const { data, error } = await supabase.from(table).select(columns).range(from, to)
-    if (error) {
-      throw new Error(`Gagal memuat tabel "${table}": ${error.message}`)
+  for (;;) {
+    let q = supabase.from(table).select(select).range(from, from + pageSize - 1)
+    if (order) q = q.order(order, { ascending: true })
+    const { data, error } = await q
+    if (error) throw new Error(`Gagal memuat tabel "${table}": ${error.message}`)
+    out.push(...data)
+    if (data.length < pageSize) break
+    from += pageSize
+  }
+  return out
+}
+
+function normalizeSales(rows) {
+  return rows.map((r) => ({
+    noFaktur: r.no_faktur,
+    tglFaktur: r.tgl_faktur,
+    kodeToko: r.kode_pelanggan,
+    namaPelanggan: r.nama_pelanggan,
+    alamatPelanggan: r.alamat_pelanggan,
+    depo: r.depo,
+    salesFaktur: r.sales_faktur || r.salesman,
+    kodeBarang: r.kode_barang,
+    namaBarang: (r.nama_barang || '').toString().trim(),
+    qty: Number(r.f_qty ?? r.qty) || 0,
+    nominal: Number(r.nominal) || 0,
+    supp: r.supp,
+    kota: r.kota,
+    bulan: r.bulan,
+    blnThn: r.bln_thn,
+    tahun: r.tahun,
+    area: r.area,
+    divisi: r.divisi,
+  }))
+}
+
+function normalizeMasterBarang(rows) {
+  return rows.map((r) => ({
+    supp: r.supp,
+    kodeBarang: r.kode_barang,
+    namaBarang: (r.nama_barang || '').toString().trim(),
+    isiPerKotak: r.isi_per_kotak,
+    program: r.program,
+    wajib: !!r.item_wajib,
+  }))
+}
+
+// rekapan_program (INPUT_REKAPAN_PROGRAM.xlsx) menggantikan sheet lama
+// "NOMINAL WAJIB" / "PERIODE PROGRAM": tiap baris sudah membawa target
+// nominal & periode program-nya sendiri per toko. Untuk kompatibilitas
+// dengan compute.js yang lama, kita turunkan nominalWajib & periodeProgram
+// (level supp+program, ambil target pertama yang ditemukan) SEKALIGUS
+// mengembalikan rekapanProgram mentah (dipakai untuk tabel "Rekap Program"
+// & perhitungan kekurangan paket).
+function deriveMasterAggregates(rekapanProgram) {
+  const nominalMap = new Map()
+  const periodeMap = new Map()
+  for (const r of rekapanProgram) {
+    const key = `${r.supp}||${r.program}`
+    if (r.target_nominal != null && !nominalMap.has(key)) {
+      nominalMap.set(key, { supp: r.supp, program: r.program, nominal: Number(r.target_nominal) || 0 })
     }
-    all = all.concat(data)
-    if (data.length < PAGE_SIZE) break
-    from += PAGE_SIZE
-  }
-  return all
-}
-
-function mapSalesRow(row) {
-  return {
-    noFaktur: String(row.no_faktur),
-    tglFaktur: row.tgl_faktur, // sudah format date (YYYY-MM-DD) dari Postgres
-    kodeToko: row.kode_toko,
-    namaPelanggan: row.nama_pelanggan,
-    alamatPelanggan: row.alamat_pelanggan,
-    depo: row.depo,
-    salesFaktur: row.sales_faktur,
-    kodeBarang: row.kode_barang,
-    namaBarang: (row.nama_barang || '').toString().trim(),
-    qty: Number(row.qty) || 0,
-    nominal: Number(row.nominal) || 0,
-    supp: row.supp,
-    kota: row.kota,
-    bulan: row.bulan,
-    blnThn: row.bln_thn,
-    tahun: row.tahun,
-    area: row.area,
-    divisi: row.divisi,
-  }
-}
-
-function mapMasterBarangRow(row) {
-  return {
-    supp: row.supp,
-    kodeBarang: row.kode_barang,
-    namaBarang: (row.nama_barang || '').toString().trim(),
-    isiPerKotak: row.isi_per_kotak,
-    program: String(row.program).trim(),
-    wajib: !!row.wajib,
-  }
-}
-
-function mapNominalWajibRow(row) {
-  return {
-    supp: row.supp,
-    program: String(row.program).trim(),
-    nominal: Number(row.nominal) || 0,
-  }
-}
-
-function mapPeriodeProgramRow(row) {
-  return {
-    supp: row.supp,
-    program: String(row.program).trim(),
-    awal: row.awal,
-    akhir: row.akhir,
-  }
-}
-
-function mapJumlahPaketRow(row) {
-  return {
-    kodeToko: row.kode_toko,
-    namaPelanggan: row.nama_pelanggan,
-    supp: row.supp,
-    program: String(row.program).trim(),
-    jumlahPaket: Number(row.jumlah_paket) > 0 ? Number(row.jumlah_paket) : 1,
-  }
-}
-
-// Ambil penanda versi data terbaru dari tabel sync_meta. Kalau tabelnya
-// belum ada (migration belum dijalankan) atau kosong, return null -> cache
-// tidak dipakai sama sekali, selalu fetch langsung (aman, tidak pernah error).
-async function getSyncVersion() {
-  const { data, error } = await supabase
-    .from('sync_meta')
-    .select('last_synced_at')
-    .eq('id', 1)
-    .maybeSingle()
-  if (error || !data) return null
-  return data.last_synced_at
-}
-
-function readCache(version) {
-  try {
-    const cachedVersion = localStorage.getItem(CACHE_VERSION_KEY)
-    if (!cachedVersion || cachedVersion !== version) return null
-    const raw = localStorage.getItem(CACHE_DATA_KEY)
-    if (!raw) return null
-    return JSON.parse(raw)
-  } catch {
-    return null // localStorage disabled/corrupt -> abaikan, fallback ke fetch biasa
-  }
-}
-
-function writeCache(version, data) {
-  try {
-    localStorage.setItem(CACHE_VERSION_KEY, version)
-    localStorage.setItem(CACHE_DATA_KEY, JSON.stringify(data))
-  } catch {
-    // localStorage penuh/disabled -> aplikasi tetap jalan, hanya tanpa cache
-  }
-}
-
-export function clearCache() {
-  try {
-    localStorage.removeItem(CACHE_VERSION_KEY)
-    localStorage.removeItem(CACHE_DATA_KEY)
-  } catch {
-    // no-op
-  }
-}
-
-// opts.forceRefresh: lewati cache sekalipun versinya cocok (dipakai tombol
-// "Muat ulang" manual di UI, untuk jaga-jaga kalau cache dicurigai basi).
-export async function loadAllData(opts = {}) {
-  if (!supabaseConfigured) {
-    throw new Error(
-      'Konfigurasi Supabase belum diset (VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY). ' +
-      'Kalau ini deployment Vercel, cek Settings > Environment Variables lalu redeploy.'
-    )
-  }
-
-  const { forceRefresh = false } = opts
-  const version = await getSyncVersion()
-
-  if (!forceRefresh && version) {
-    const cached = readCache(version)
-    if (cached) {
-      return { ...cached, lastSyncedAt: version, fromCache: true }
+    if ((r.awal_program || r.akhir_program) && !periodeMap.has(key)) {
+      periodeMap.set(key, { supp: r.supp, program: r.program, awal: r.awal_program, akhir: r.akhir_program })
     }
   }
+  return {
+    nominalWajib: Array.from(nominalMap.values()),
+    periodeProgram: Array.from(periodeMap.values()),
+  }
+}
 
-  const [salesRows, masterBarangRows, nominalWajibRows, periodeProgramRows, jumlahPaketRows] = await Promise.all([
-    fetchAllRows(
-      'sales',
-      'no_faktur, tgl_faktur, kode_toko, nama_pelanggan, alamat_pelanggan, depo, sales_faktur, kode_barang, nama_barang, qty, nominal, supp, kota, bulan, bln_thn, tahun, area, divisi'
-    ),
-    fetchAllRows('master_barang', 'supp, kode_barang, nama_barang, isi_per_kotak, program, wajib'),
-    fetchAllRows('nominal_wajib', 'supp, program, nominal'),
-    fetchAllRows('periode_program', 'supp, program, awal, akhir'),
-    // Tabel baru: kalau migration belum dijalankan di project Supabase ini,
-    // tabelnya belum ada -> jangan gagalkan seluruh load, anggap saja belum
-    // ada pelanggan yang ikut paket berganda (semua default 1 paket).
-    fetchAllRows('jumlah_paket', 'kode_toko, nama_pelanggan, supp, program, jumlah_paket').catch(() => []),
+function normalizeRekapanProgram(rows) {
+  return rows.map((r) => ({
+    id: r.id,
+    supp: r.supp,
+    kodeToko: r.kode_toko,
+    namaPelanggan: r.nama_pelanggan,
+    alamatPelanggan: r.alamat_pelanggan,
+    depo: r.depo,
+    kotaArea: r.kota_area,
+    salesman: r.salesman,
+    program: r.program,
+    pengajuanPaket: Number(r.pengajuan_paket) || 0,
+    // 0 di Excel -> false -> "Belum sampai ke kantor"
+    formFisik: !!r.form_fisik,
+    targetNominal: r.target_nominal == null ? null : Number(r.target_nominal),
+    awalProgram: r.awal_program,
+    akhirProgram: r.akhir_program,
+  }))
+}
+
+export async function loadAllData() {
+  const [salesRows, masterRows, rekapanRows] = await Promise.all([
+    fetchAll('data_penjualan'),
+    fetchAll('master_barang'),
+    fetchAll('rekapan_program'),
   ])
 
-  const result = {
-    sales: salesRows.map(mapSalesRow),
-    masterBarang: masterBarangRows.map(mapMasterBarangRow),
-    nominalWajib: nominalWajibRows.map(mapNominalWajibRow),
-    periodeProgram: periodeProgramRows.map(mapPeriodeProgramRow),
-    jumlahPaket: jumlahPaketRows.map(mapJumlahPaketRow),
-  }
+  const sales = normalizeSales(salesRows)
+  const masterBarang = normalizeMasterBarang(masterRows)
+  const rekapanProgram = normalizeRekapanProgram(rekapanRows)
+  const { nominalWajib, periodeProgram } = deriveMasterAggregates(rekapanRows)
 
-  if (version) {
-    writeCache(version, result)
-  }
-
-  return { ...result, lastSyncedAt: version, fromCache: false }
+  return { sales, masterBarang, rekapanProgram, nominalWajib, periodeProgram }
 }

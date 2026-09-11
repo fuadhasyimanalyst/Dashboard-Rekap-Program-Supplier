@@ -1,73 +1,121 @@
 # Dashboard Rekap Program Supplier
 
-Dashboard untuk memantau realisasi program supplier (SUPERFAN, BUCKET SEAL, KUNINGAN, PVCBV, DISPLAY HOKI) per pelanggan, dibangun dengan React + Vite + Tailwind.
+Dashboard untuk memantau realisasi program supplier (SUPERFAN, BUCKET SEAL, KUNINGAN, PVCBV, DISPLAY HOKI, KONTAINER, dll) per pelanggan, dibangun dengan React + Vite + Tailwind.
 
-**Data tetap dalam bentuk Excel** — file `DATA_PENJUALAN.xlsx` dan `MASTER_PROGRAM.xlsx` ada di folder `public/data/`, dan dibaca langsung oleh aplikasi setiap kali halaman dibuka (tidak dikonversi ke JSON). Jadi kalau mau update data, tinggal timpa file Excel-nya, tidak perlu jalankan script apapun.
+Ada **2 mode sumber data**, tinggal pilih lewat `.env`:
 
-## Menjalankan di komputer lokal
+| Mode | `VITE_DATA_SOURCE` | Cara kerja |
+|---|---|---|
+| **Lokal** (default, buat coba-coba cepat) | `local` | Baca langsung 3 file Excel di `public/data/`, tidak perlu setup apapun |
+| **Supabase** (production) | `supabase` | Baca dari database Supabase, datanya dipindahkan lewat `scripts/import-to-supabase.mjs` |
 
-Butuh **Node.js** (versi 18 ke atas). Cek dulu dengan `node -v`, kalau belum ada install dari https://nodejs.org.
+Ada 3 sumber data di kedua mode:
+- `MASTER_BARANG.xlsx` — daftar barang per program per supplier.
+- `INPUT_REKAPAN_PROGRAM.xlsx` — data master pengajuan tiap toko (Pengajuan Paket, Form Fisik, Target, Periode). **Semua baris ditampilkan apa adanya**, tidak difilter.
+- `DATA_PENJUALAN.xlsx` — transaksi faktur yang dipakai untuk mencocokkan apakah nominal & barang yang terjual sudah memenuhi program.
+
+## Cara cepat coba dulu (mode lokal, tanpa Supabase)
+
+File Excel-nya sudah ada di `public/data/`. Tinggal:
 
 ```bash
-# 1. Masuk ke folder project
-cd dashboard-program-supplier
-
-# 2. Install dependency (sekali saja / setiap ada perubahan package.json)
 npm install
-
-# 3. Jalankan dashboard
 npm run dev
 ```
 
-Buka browser ke alamat yang muncul di terminal (biasanya `http://localhost:5173`).
+Buka browser ke alamat yang muncul di terminal (biasanya `http://localhost:5173`). Kalau mau ganti data, timpa (replace) file di `public/data/` dengan yang baru (nama file & nama sheet harus sama persis), lalu reload browser — tidak perlu restart server atau setup apapun.
 
-Untuk build versi produksi (misalnya untuk di-hosting):
+Untuk build versi produksi (masih mode lokal):
 ```bash
 npm run build
-npm run preview   # coba hasil build-nya
+npm run preview
 ```
 
-## Update data baru (Agustus, September, dst)
+## Pindah ke Supabase (production)
 
-1. Buka folder `public/data/`.
-2. Timpa (replace) `DATA_PENJUALAN.xlsx` dan/atau `MASTER_PROGRAM.xlsx` dengan file terbaru — **nama file dan nama sheet harus sama persis**:
-   - `DATA_PENJUALAN.xlsx` → sheet `Sheet1`, dengan kolom header yang sama seperti sebelumnya (`NO FAKTUR`, `TGL FAKTUR`, `KODE PELANGGAN`, `NAMA BARANG`, `NOMINAL`, `SUPP`, dst).
-   - `MASTER_PROGRAM.xlsx` → sheet `MASTER BARANG`, `NOMINAL WAJIB`, `PERIODE PROGRAM`, `JUMLAH PAKET`.
-3. Refresh halaman dashboard (kalau `npm run dev` sedang berjalan, cukup reload browser — tidak perlu restart server). Kalau pakai Supabase, jalankan `npm run sync` setelah update Excel-nya.
+Kalau datanya sudah mulai besar / mau dibuka banyak orang sekaligus / mau diupdate dari tempat lain, pindah ke mode Supabase:
 
-## Fitur "Jumlah Paket" (pelanggan ikut lebih dari 1 paket program)
+### 1. Setup Supabase (sekali saja)
 
-Sheet baru `JUMLAH PAKET` di `MASTER_PROGRAM.xlsx` dipakai untuk menandai pelanggan yang ikut program lebih dari 1 paket. Kalau jumlah paketnya > 1, **syarat omset** dan **syarat jumlah varian wajib** program itu otomatis dikalikan sesuai jumlah paketnya.
+1. Buat project baru di https://supabase.com (gratis).
+2. Buka **SQL Editor** di dashboard Supabase project-mu, tempel isi file [`supabase/schema.sql`](./supabase/schema.sql), lalu **Run**. Ini akan membuat 3 tabel + 1 view + izin baca publik (RLS).
+3. Ambil kredensialnya di **Project Settings → API**:
+   - `Project URL` → dipakai sebagai `SUPABASE_URL` / `VITE_SUPABASE_URL`
+   - `service_role` key (rahasia, jangan disebar) → dipakai sebagai `SUPABASE_SERVICE_ROLE_KEY`, hanya untuk script import
+   - `anon` `public` key → dipakai sebagai `VITE_SUPABASE_ANON_KEY`, dipakai aplikasi di browser
 
-Kolom sheet `JUMLAH PAKET`:
+### 2. Konfigurasi environment
 
-| KODE PELANGGAN | NAMA PELANGGAN | SUPP  | PROGRAM   | JUMLAH PAKET |
-|---|---|---|---|---|
-| TB001 | TB. PUJO | DCOTA | SUPERFAN | 2 |
+```bash
+cp .env.example .env
+```
 
-Contoh: SUPERFAN syarat dasarnya (1 paket) adalah omset > Rp 2.000.000 dan minimal 2 dari 3 item wajib. Kalau TB. PUJO didaftarkan dengan `JUMLAH PAKET = 2`, syaratnya otomatis jadi:
-- Omset harus **> Rp 4.000.000** (2.000.000 × 2)
-- Item wajib minimal **4 varian** (2 × 2) — catatan: kalau daftar item wajib program itu di sheet `MASTER BARANG` cuma ada 3 item, syarat "4 varian" ini otomatis mustahil tercapai, jadi pastikan daftar item wajib di `MASTER BARANG` cukup banyak untuk program yang dipakai bersama fitur paket ini.
+Isi `.env`: set `VITE_DATA_SOURCE=supabase`, lalu isi 4 nilai kredensial Supabase-nya.
 
-Kalau pelanggan tidak terdaftar di sheet `JUMLAH PAKET` (atau file/sheetnya belum ada sama sekali), semua pelanggan dianggap **1 paket** (perilaku lama, tidak berubah) — jadi fitur ini aman ditambahkan kapan saja tanpa mengganggu data yang sudah ada.
+### 3. Pindahkan data Excel ke Supabase
 
-Kalau pakai Supabase, tambahkan tabel `jumlah_paket` dulu dengan menjalankan `supabase/migration_jumlah_paket.sql` di SQL Editor (project yang sudah ada), baru jalankan `npm run sync` untuk mengisi datanya dari Excel. Kalau bikin project Supabase baru, cukup jalankan `supabase/migration.sql` (sudah termasuk tabel ini).
+1. Buat folder `data-in/` di root project, taruh 3 file Excel di dalamnya dengan nama **persis**:
+   - `data-in/INPUT_REKAPAN_PROGRAM.xlsx`
+   - `data-in/MASTER_BARANG.xlsx`
+   - `data-in/DATA_PENJUALAN.xlsx`
+   (boleh salin dari `public/data/` kalau isinya sama)
+2. Jalankan:
+   ```bash
+   npm run import:supabase
+   ```
+   Script ini akan mengosongkan tabel lama lalu mengisi ulang dengan isi file Excel terbaru (full refresh), jadi aman dijalankan berulang kali tiap ada data baru.
 
-Boleh juga edit langsung isi Excel-nya (misalnya nambah baris di sheet `PERIODE PROGRAM` atau `MASTER BARANG`) tanpa perlu tools tambahan, tinggal save filenya di folder `public/data/`.
+### 4. Jalankan dashboard
 
-## Catatan penting soal data & aturan
+```bash
+npm run dev
+```
 
-- Data penjualan contoh yang diupload hanya mencakup **Juli 2026**. Periode **DISPLAY HOKI** (1 Juli – 30 Sept 2026) sudah mencakup bulan ini, jadi realisasinya langsung kelihatan. Tapi periode **SUPERFAN, BUCKET SEAL, KUNINGAN, PVCBV** baru mulai **1 Agustus 2026**, jadi realisasinya masih kosong sampai data Agustus/September di-upload. Gunakan toggle **"Semua transaksi"** di kanan atas untuk simulasi berdasarkan data yang ada sekarang; setelah data Agustus/September masuk, pindah ke **"Sesuai periode resmi"** supaya semua program dihitung sesuai periode resminya masing-masing.
-- Reward program **SUPERFAN** belum disebutkan nilainya secara spesifik, jadi kolom reward untuk program ini ditulis "Sesuai ketentuan program" — bisa diubah di `src/lib/compute.js` (cari `REWARD_LABEL`) begitu sudah ditentukan.
+Update data baru: timpa file di `data-in/`, jalankan lagi `npm run import:supabase`, lalu klik tombol **refresh** di pojok kanan atas dashboard (bukan cuma reload browser — lihat bagian caching di bawah).
 
-## Ringkasan aturan program yang sudah diterapkan
+## Caching (biar kuota Supabase tidak boros)
+
+Mode Supabase otomatis pakai **cache di browser** (localStorage), supaya tidak setiap reload halaman fetch ulang ribuan baris dari Supabase:
+
+- Fetch pertama = **Cache MISS** — ambil data fresh dari Supabase, lalu disimpan di cache browser.
+- **Default: cache tidak pernah kedaluwarsa otomatis.** Reload halaman berapa kali pun = selalu **Cache HIT** — pakai data dari cache, **tidak ada request ke Supabase sama sekali** — sampai kamu klik tombol refresh manual. Cocok kalau sinkronisasi Excel → Supabase memang cuma dilakukan manual beberapa kali sehari (misal 2x sehari), jadi tidak ada gunanya dashboard fetch ulang sendiri di sela-sela jadwal itu.
+- Kalau mau tetap ada auto-refresh berkala (misal tiap 30 menit), isi `VITE_CACHE_TTL_MINUTES=30` di `.env`.
+
+Status cache-nya (HIT/MISS + kapan terakhir diambil) muncul sebagai badge di pojok kanan atas dashboard. Di sebelahnya ada tombol refresh (ikon 🔄) untuk **paksa ambil data terbaru langsung dari Supabase**, melewati cache — **klik ini setiap habis menjalankan `npm run import:supabase`**, supaya user langsung lihat data baru.
+
+Cache tersimpan per-browser (bukan per-device/per-user), jadi kalau ganti browser atau buka mode incognito, otomatis MISS lagi di awal. Mode lokal (`VITE_DATA_SOURCE=local`) tidak pakai caching sama sekali karena baca file statis, bukan API.
+
+## Cara membaca data & aturan bisnis
+
+- **`INPUT_REKAPAN_PROGRAM.xlsx` → tabel `rekapan_program`**: ini data master, satu baris = satu toko mengajukan satu program. Ditampilkan **seluruhnya** di tab "Pengajuan Paket", tidak ada baris yang disembunyikan.
+  - Kolom **FORM FISIK**: `0` = form fisik **belum sampai ke kantor**, `1` = **sudah sampai**.
+  - Kolom **PENGAJUAN PAKET** (atau **PAKET PENGAJUAN** di sheet INLITE): jumlah paket program yang diajukan toko tsb.
+- **`MASTER_BARANG.xlsx` → tabel `master_barang`**: daftar barang apa saja yang termasuk tiap program, per supplier.
+- **`DATA_PENJUALAN.xlsx` → tabel `data_penjualan`**: dipakai untuk mencocokkan apakah nominal & nama barang yang sudah terjual (jadi faktur) memenuhi syarat program. Kolom **F. QTY** = qty barang program yang sudah jadi faktur / sudah dikirim.
+- **Kekurangan kirim**: untuk tiap pengajuan (toko x program), barang program dicari di `data_penjualan` lewat nama barang yang cocok dengan `master_barang` program tsb, lalu di-jumlah F.QTY-nya. Kekurangan = `PENGAJUAN PAKET - total F.QTY yang sudah jadi faktur` (minimal 0). Ini yang dipakai untuk kolom **"Kekurangan Kirim"** di tab "Pengajuan Paket" — jumlah barang yang masih perlu dikirim ke pelanggan supaya pengajuan paketnya terpenuhi.
+
+Logika lengkap ada di `src/lib/compute.js` (`computeKekuranganPaket`) dan di view SQL `v_rekap_kekurangan` (di `supabase/schema.sql`) untuk yang ingin query langsung dari database / bikin laporan lain.
+
+## Ringkasan aturan program (tab "Rekap Program")
 
 | Program | Supplier | Syarat | Reward |
 |---|---|---|---|
-| SUPERFAN | DCOTA | Beli min. 2 dari 3 item wajib (DABS-C 201, DABS-C 204, DT CRES 1/2") **dan** omset item program > Rp 2.000.000 dalam periode | — |
-| BUCKET SEAL | DCOTA | Beli SEAL TAPE 1/2" **dan** SEALTAPE BUCKET (48 PCS) | Diskon 10% |
+| SUPERFAN | DCOTA | Beli min. 2 dari item wajib **dan** omset item program melebihi target nominal dalam periode | — |
+| BUCKET SEAL | DCOTA | Beli semua item program | Diskon 10% |
 | KUNINGAN | DCOTA | Beli minimal 2 varian berbeda dari daftar item Kuningan | Diskon 5% |
 | PVCBV | DCOTA | Beli minimal 2 varian berbeda dari daftar item PVCBV | Diskon 7% |
-| DISPLAY HOKI | INLITE | Omset item program mencapai >= Rp 1.500.000 dalam periode | Rp 200.000 |
+| DISPLAY HOKI | INLITE | Omset item program mencapai target nominal dalam periode | Rp 200.000 |
 
-Logika lengkap ada di `src/lib/compute.js` dan `src/lib/excelLoader.js` (pembaca file Excel), terpisah rapi dari tampilan supaya mudah disesuaikan kalau ada perubahan aturan.
+Target nominal & periode tiap program sekarang diambil per-toko dari `rekapan_program` (kolom `TARGET NOMINAL`/`TARGET`, `AWAL PROGRAM`, `AKHIR PROGRAM`), bukan dari sheet terpisah lagi.
+
+## Struktur file yang relevan
+
+```
+supabase/schema.sql            # DDL: 3 tabel + view v_rekap_kekurangan + RLS (mode Supabase)
+scripts/import-to-supabase.mjs # Script Node: baca 3 Excel -> upload ke Supabase (mode Supabase)
+src/lib/localLoader.js         # Baca 3 Excel langsung dari public/data/ di browser (mode lokal, default)
+src/lib/supabaseClient.js      # Klien Supabase untuk browser (pakai anon key, mode Supabase)
+src/lib/supabaseLoader.js      # Ambil & normalisasi data dari Supabase (mode Supabase)
+src/lib/compute.js             # Semua logika rekap, termasuk computeKekuranganPaket (dipakai kedua mode)
+src/components/PengajuanPaketTable.jsx  # Tab "Pengajuan Paket" (form fisik + kekurangan kirim)
+```

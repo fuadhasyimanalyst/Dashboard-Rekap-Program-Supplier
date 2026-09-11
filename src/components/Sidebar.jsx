@@ -1,9 +1,10 @@
 import React from 'react'
-import { LayoutGrid, ClipboardList, Boxes, PanelLeftClose } from 'lucide-react'
+import { LayoutGrid, ClipboardList, Boxes, PackageSearch, PanelLeftClose } from 'lucide-react'
 
 const NAV = [
   { id: 'overview', label: 'Ringkasan', icon: LayoutGrid },
   { id: 'recap', label: 'Rekap Program', icon: ClipboardList },
+  { id: 'pengajuan', label: 'Pengajuan Paket', icon: PackageSearch },
   { id: 'master', label: 'Data Master', icon: Boxes },
 ]
 
@@ -46,7 +47,7 @@ export default function Sidebar({ active, onChange, hidden, onHide }) {
         })}
       </nav>
       <div className="mt-auto px-2 pt-6 text-[12px] leading-relaxed" style={{ color: '#5E7581' }}>
-        Data dibaca langsung dari file Excel di <code>public/data/</code>. Edit file-nya lalu refresh halaman.
+        Mode lokal: data dibaca langsung dari 3 file Excel di <code>public/data/</code>. Timpa filenya lalu refresh halaman. Untuk pakai Supabase, set <code>VITE_DATA_SOURCE=supabase</code> di <code>.env</code>.
       </div>
     </aside>
   )
