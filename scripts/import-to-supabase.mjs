@@ -160,6 +160,8 @@ function readMasterBarang(filePath) {
 function readRekapanProgram(filePath) {
   const wb = XLSX.readFile(filePath, { cellDates: true })
   const out = []
+  const seenKeys = new Map() // `${supp}||${kodeToko}||${program}||${awalProgram}` -> index di out
+  const dupes = []
 
   for (const sheetName of wb.SheetNames) {
     const rows = sheetToRows(wb.Sheets[sheetName])
@@ -174,7 +176,7 @@ function readRekapanProgram(filePath) {
       const program = get(row, idx, 'PROGRAM')
       if (!kodeToko || !program) continue
 
-      out.push({
+      const entry = {
         supp,
         kode_toko: String(kodeToko).trim(),
         nama_pelanggan: get(row, idx, 'NAMA PELANGGAN', ['NAMA TOKO']),
@@ -194,10 +196,32 @@ function readRekapanProgram(filePath) {
         })(),
         awal_program: toISODate(get(row, idx, 'AWAL PROGRAM')),
         akhir_program: toISODate(get(row, idx, 'AKHIR PROGRAM')),
-      })
+      }
+
+      // Tabel rekapan_program punya unique constraint di kombinasi
+      // (supp, kode_toko, program, awal_program). Excel-nya kadang ada
+      // baris kepencet dobel utk kombinasi yg sama -> digabung di sini
+      // (baris pertama yg dipakai) supaya insert tidak crash. Kalau
+      // isinya ternyata beda (bukan cuma dobel-ketik), dilaporkan sbg
+      // warning supaya bisa dicek manual mana yang benar.
+      const dedupeKey = `${supp}||${entry.kode_toko.toUpperCase()}||${entry.program.toUpperCase()}||${entry.awal_program ?? ''}`
+      if (seenKeys.has(dedupeKey)) {
+        const prevIdx = seenKeys.get(dedupeKey)
+        const prev = out[prevIdx]
+        const sameData = prev.pengajuan_paket === entry.pengajuan_paket
+          && prev.form_fisik === entry.form_fisik
+          && prev.target_nominal === entry.target_nominal
+          && prev.akhir_program === entry.akhir_program
+        if (!sameData) {
+          dupes.push({ sheetName, kodeToko: entry.kode_toko, program: entry.program, prev, entry })
+        }
+        continue
+      }
+      seenKeys.set(dedupeKey, out.length)
+      out.push(entry)
     }
   }
-  return out
+  return { rows: out, dupes }
 }
 
 // ---------------------------------------------------------------------------
@@ -258,12 +282,20 @@ async function main() {
   console.log(`Membaca file dari: ${SRC_DIR}`)
 
   const masterBarang = readMasterBarang(FILES.masterBarang)
-  const rekapanProgram = readRekapanProgram(FILES.rekapan)
+  const { rows: rekapanProgram, dupes: rekapanDupes } = readRekapanProgram(FILES.rekapan)
   const dataPenjualan = readDataPenjualan(FILES.penjualan)
 
   console.log(`  MASTER_BARANG.xlsx          -> ${masterBarang.length} baris`)
   console.log(`  INPUT_REKAPAN_PROGRAM.xlsx  -> ${rekapanProgram.length} baris`)
   console.log(`  DATA_PENJUALAN.xlsx         -> ${dataPenjualan.length} baris`)
+
+  if (rekapanDupes.length > 0) {
+    console.log(`\nPERINGATAN: ${rekapanDupes.length} baris di INPUT_REKAPAN_PROGRAM.xlsx punya SUPP+KODE TOKO+PROGRAM+AWAL PROGRAM yang sama tapi isinya beda (cuma baris pertama yang dipakai, cek manual mana yang benar):`)
+    for (const d of rekapanDupes.slice(0, 20)) {
+      console.log(`   - [sheet ${d.sheetName}] ${d.kodeToko} / ${d.program}: pengajuan_paket ${d.prev.pengajuan_paket} vs ${d.entry.pengajuan_paket}`)
+    }
+    if (rekapanDupes.length > 20) console.log(`   ...dan ${rekapanDupes.length - 20} baris lainnya`)
+  }
 
   console.log('\nMengosongkan tabel lama (full refresh)...')
   for (const table of ['data_penjualan', 'rekapan_program', 'master_barang']) {
